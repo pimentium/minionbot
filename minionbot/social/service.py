@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 
 from minionbot.social.fetch import MediaFetcher
-from minionbot.social.models import DownloadError, Link, Post
+from minionbot.social.models import DownloadError, Link, Post, UnexpectedDownloadError
 
 LOGGER = logging.getLogger(__name__)
 
@@ -32,4 +32,4 @@ class SocialService:
             raise
         except Exception as error:
             LOGGER.exception("Unexpected failure for %s", link.url)
-            raise DownloadError(FAILED_TEXT.format(url=link.url)) from error
+            raise UnexpectedDownloadError(FAILED_TEXT.format(url=link.url)) from error

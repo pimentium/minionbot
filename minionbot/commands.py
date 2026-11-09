@@ -65,7 +65,15 @@ class CommandRegistry:
     def Available(self, user: User | None) -> list[Command]:
         return [c for c in self.commands.values() if self.CanRun(c, user)]
 
-    def Dispatch(self, name: str, args: list[str], telegramId: int, username: str | None, store: UserStore) -> str:
+    def Dispatch(
+        self,
+        name: str,
+        args: list[str],
+        telegramId: int,
+        username: str | None,
+        store: UserStore,
+        onError: Callable[[Exception], None] | None = None,
+    ) -> str:
         user = store.Authenticate(telegramId, username)
         command = self.commands.get(name)
         if command is None:
@@ -79,8 +87,10 @@ class CommandRegistry:
             return command.handler(context)
         except UserError as error:
             return f"Error: {error}"
-        except Exception:
+        except Exception as error:
             LOGGER.exception("Command /%s failed", name)
+            if onError is not None:
+                onError(error)
             return INTERNAL_ERROR_TEXT
 
     def DispatchFallback(self, telegramId: int, username: str | None, store: UserStore) -> str:

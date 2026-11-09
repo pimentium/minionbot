@@ -92,6 +92,25 @@ correct aspect ratio. Videos over 50 MB (Telegram's bot limit) and photos over 1
 and the original link. Albums are sent in groups of 10. Text that doesn't fit a 1024-char caption follows as
 messages.
 
+## Owner notifications and reliability
+
+- **Start-up message:** every time the bot starts it messages the owner: host name, OS, whether it runs in
+  Docker, Python version, pid, bot name, number of configured users and the group privacy mode. The owner must
+  have written to the bot at least once (Telegram doesn't let bots start conversations); if the owner was added
+  by `@username` only, the message is skipped until their numeric ID is known (the log says so).
+- **Failure messages:** unhandled errors (a bug while handling a message or command, an unexpected download or
+  send failure, a polling error such as two instances running at once) are sent to the owner with where it
+  happened, the error and the tail of the traceback. Expected problems (private post, expired session, network
+  blips) are not sent. The same error is reported at most once per 10 minutes. Secrets are redacted.
+- **Auto-restart:** if the bot crashes, it is rebuilt and started again after 2, 4, 8 ... up to 300 seconds
+  (the counter resets after a run that lasted a minute); the next start-up message says
+  `Restarted: restart #N after: <error>`. An invalid bot token is fatal (exit code 1, no retry). Ctrl+C / SIGTERM
+  stop the bot normally.
+- **Hard crashes:** if the whole process dies (out of memory, killed), only an outer supervisor can restart it.
+  In Docker use `restart: unless-stopped`; with systemd use `Restart=always`.
+- **Logs:** the bot token and session cookies are redacted from all log output (python-telegram-bot itself
+  prints the token in some error messages).
+
 ## Tests
 
 ```bash

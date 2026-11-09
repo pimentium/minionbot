@@ -49,3 +49,36 @@ def test_root_main_script_calls_main(monkeypatch):
     monkeypatch.setattr(main, "Main", called)
     runpy.run_path(str(Path(main.__file__).parents[1] / "main.py"), run_name="__main__")
     called.assert_called_once_with()
+
+
+def test_invalid_token_is_fatal_and_not_retried(monkeypatch, tmp_path):
+    from telegram.error import InvalidToken
+
+    for name in ("BOT_TOKEN", "INITIAL_USER", "USERS_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(main, "load_dotenv", lambda: None)
+    monkeypatch.setattr(main, "MediaFetcher", MagicMock())
+    application = MagicMock()
+    application.run_polling.side_effect = InvalidToken("rejected")
+    build = MagicMock(return_value=application)
+    monkeypatch.setattr(main, "BuildApplication", build)
+    with pytest.raises(SystemExit) as exit_:
+        main.Main(["--token", "1:T", "--initial-user", "42", "--users-file", str(tmp_path / "u.json")])
+    assert exit_.value.code == 1 and build.call_count == 1
+
+
+def test_crash_restarts_with_fresh_application_and_reason(monkeypatch, tmp_path):
+    for name in ("BOT_TOKEN", "INITIAL_USER", "USERS_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(main, "load_dotenv", lambda: None)
+    monkeypatch.setattr(main, "MediaFetcher", MagicMock())
+    monkeypatch.setattr("minionbot.supervisor.time.sleep", lambda seconds: None)
+    crashing, healthy = MagicMock(), MagicMock()
+    crashing.run_polling.side_effect = RuntimeError("polling died for 1:TOKEN")
+    build = MagicMock(side_effect=[crashing, healthy])
+    monkeypatch.setattr(main, "BuildApplication", build)
+    main.Main(["--token", "1:TOKEN", "--initial-user", "42", "--users-file", str(tmp_path / "u.json")])
+    assert build.call_count == 2 and healthy.run_polling.call_count == 1
+    restartInfo = build.call_args_list[1][0][4]
+    assert restartInfo == "restart #1 after: RuntimeError: polling died for ***"
+    assert build.call_args_list[0][0][4] == ""

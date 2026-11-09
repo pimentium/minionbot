@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 from typing import Sequence
 
 from dotenv import load_dotenv
+from telegram.error import InvalidToken
 
-from minionbot.bot import BuildApplication, ConfigureLogging
+from minionbot.bot import BuildApplication, ConfigureLogging, RedactSecrets
 from minionbot.builtin import BuildRegistry
 from minionbot.config import LoadConfig
 from minionbot.social.factory import BuildDownloaders
@@ -16,6 +18,7 @@ from minionbot.social.fetch import MediaFetcher
 from minionbot.social.instagram import InstagramDownloader
 from minionbot.social.models import DownloadError, SocialAccount
 from minionbot.social.service import SocialService
+from minionbot.supervisor import RunForever
 from minionbot.users import UserStore
 
 
@@ -39,23 +42,50 @@ def AccountOverrides(args: argparse.Namespace) -> dict[str, SocialAccount]:
     }
 
 
+def IsFatal(error: BaseException) -> bool:
+    """Errors that restarting cannot fix."""
+    return isinstance(error, InvalidToken)
+
+
 def Main(argv: Sequence[str] | None = None) -> None:
     args = ParseArgs(argv)
     load_dotenv()
     ConfigureLogging()
     config = LoadConfig(botToken=args.token, initialUser=args.initial_user, usersFile=args.users_file, accountOverrides=AccountOverrides(args))
+    secrets = [config.botToken] + [v for a in config.accounts.values() for v in (a.sessionId, a.authToken)]
+    RedactSecrets(secrets)
     store = UserStore(config.usersFile)
     owner = store.EnsureInitialUser(config.initialUser)
     logging.getLogger(__name__).info("Starting with %d user(s); initial user: %s", len(store.List()), owner.name)
-    downloaders = BuildDownloaders(config.accounts)
-    instagram = downloaders["instagram"]
-    if isinstance(instagram, InstagramDownloader):
-        try:
-            instagram.Login()
-        except DownloadError as error:
-            logging.getLogger(__name__).warning("Instagram login at startup failed; will retry on first link: %s", error)
-    service = SocialService(downloaders, MediaFetcher())
-    BuildApplication(config, store, BuildRegistry(), service).run_polling()
+
+    def RunOnce(restartCount: int, lastError: str) -> None:
+        # Everything that holds an event loop (HTTP clients, the application) is rebuilt on every restart.
+        downloaders = BuildDownloaders(config.accounts)
+        instagram = downloaders["instagram"]
+        if isinstance(instagram, InstagramDownloader):
+            try:
+                instagram.Login()
+            except DownloadError as error:
+                logging.getLogger(__name__).warning("Instagram login at startup failed; will retry on first link: %s", error)
+        service = SocialService(downloaders, MediaFetcher())
+        restartInfo = f"restart #{restartCount} after: {lastError}" if restartCount else ""
+        application = BuildApplication(config, store, BuildRegistry(), service, restartInfo)
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        application.run_polling()
+
+    def Scrub(text: str) -> str:
+        for secret in secrets:
+            if secret:
+                text = text.replace(secret, "***")
+        return text
+
+    try:
+        RunForever(RunOnce, isFatal=IsFatal, scrub=Scrub)
+    except Exception as error:
+        if not IsFatal(error):
+            raise
+        # Already logged (redacted). Exit without Python's own traceback, which would print the bot token.
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

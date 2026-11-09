@@ -20,6 +20,10 @@ class DownloadError(Exception):
     """A user-facing reason why a post could not be downloaded."""
 
 
+class UnexpectedDownloadError(DownloadError):
+    """A download failed because of a bug or unforeseen error (the owner should be told); see __cause__."""
+
+
 @dataclass(frozen=True)
 class Link:
     network: str

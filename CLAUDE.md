@@ -19,6 +19,9 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
 - `minionbot/builtin.py`: /start /help /whoami /users; `BuildRegistry()` is where new commands go.
 - `minionbot/bot.py`: thin telegram adapter. `main.py` (repo root) and `python -m minionbot.main`: entry points.
 
+- `minionbot/notify.py`: `Notifier` (owner messages: startup, failures; scrubs secrets; 10 min cooldown per error).
+  `minionbot/supervisor.py`: `RunForever` restart loop with backoff. `bot.py` has the PTB error handler and
+  `RedactingFilter` (log redaction).
 - `minionbot/social/`: `links.py` (URL classification), `triggers.py` (when to react / which links),
   `instagram.py` (instagrapi, sessionid cookie), `gallerydl.py` (Twitter/Facebook + Twitter thread merge), `threads.py`
   (custom page reader), `fetch.py` (media download + size limits), `videoinfo.py` (pure-Python MP4 width/height/duration), `format.py`, `service.py`, `factory.py`.
@@ -48,8 +51,15 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
 - Group handling: react only to @mention (+ replies to a message when the reply mentions the bot).
   Updates are processed concurrently (downloads are slow).
 
+- Reliability: `main.py` runs `RunForever(RunOnce)`; everything holding an event loop (httpx clients, the PTB
+  Application) is rebuilt per attempt. Fatal = `InvalidToken` only. Unexpected failures are reported via
+  `Notifier.ReportFailure`; expected `DownloadError`s are not (only `UnexpectedDownloadError`). Process-level
+  restarts are left to Docker/systemd.
+- PTB prints the bot token in some exceptions: `RedactSecrets` installs a log filter; keep it.
+
 ## Verification status
-Tests use mocks/fixtures. Verified live by the owner: Instagram (sessionid) and Twitter (auth_token) downloads.
+Tests use mocks/fixtures. Checked against real Telegram with a FAKE token only: invalid token exits fatally, two
+run_polling calls in one process work. Owner notifications and crash/restart are NOT verified live. Verified live by the owner: Instagram (sessionid) and Twitter (auth_token) downloads.
 NOT verified: Facebook, Threads, and the video aspect-ratio fix in real Telegram. The MP4 reader was checked
 against ffprobe on generated files.
 

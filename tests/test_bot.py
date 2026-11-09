@@ -304,3 +304,116 @@ async def test_log_bot_info_records_privacy_flag():
     application.bot.get_me = AsyncMock(return_value=MagicMock(username=BOT, can_read_all_group_messages=False))
     await bot.LogBotInfo(application)
     assert application.bot_data[bot.PRIVACY_ON_KEY] is True
+
+
+# ---- owner notifications and error handling -------------------------------------------------
+
+def FakeNotifier():
+    notifier = MagicMock()
+    notifier.ReportFailure = AsyncMock()
+    notifier.NotifyStartup = AsyncMock()
+    return notifier
+
+
+async def test_unexpected_download_error_notifies_owner(store):
+    from minionbot.social.models import UnexpectedDownloadError
+
+    cause = ValueError("bug")
+    error = UnexpectedDownloadError("Sorry, something went wrong")
+    error.__cause__ = cause
+    notifier = FakeNotifier()
+    message = FakeMessage(TWEET)
+    await MakeMessageCallback(store, FakeService(error=error), notifier)(FakeUpdate(message), FakeContext())
+    assert "something went wrong" in message.reply_text.call_args[0][0]
+    notifier.ReportFailure.assert_awaited_once()
+    assert notifier.ReportFailure.call_args[0][1] is cause
+
+
+async def test_expected_download_error_does_not_notify(store):
+    notifier = FakeNotifier()
+    await MakeMessageCallback(store, FakeService(error=DownloadError("private post")), notifier)(FakeUpdate(FakeMessage(TWEET)), FakeContext())
+    notifier.ReportFailure.assert_not_awaited()
+
+
+async def test_send_failure_notifies_owner(store, tmp_path):
+    notifier = FakeNotifier()
+    message = FakeMessage(TWEET)
+    message.reply_photo.side_effect = RuntimeError("telegram down")
+    await MakeMessageCallback(store, FakeService(MakePost(tmp_path)), notifier)(FakeUpdate(message), FakeContext())
+    assert notifier.ReportFailure.call_args[0][1].args == ("telegram down",)
+
+
+async def test_command_crash_notifies_owner(store):
+    from minionbot.commands import Command, CommandRegistry
+
+    registry = CommandRegistry()
+    registry.Register(Command("boom", lambda ctx: 1 / 0))
+    notifier = FakeNotifier()
+    update = FakeUpdate(FakeMessage("/boom"))
+    await MakeCommandCallback(registry, store, "boom", notifier)(update, FakeContext([]))
+    assert update.effective_message.reply_text.call_args[0][0] == "Something went wrong."
+    assert isinstance(notifier.ReportFailure.call_args[0][1], ZeroDivisionError)
+
+
+async def test_error_handler_reports_real_errors_but_not_network_blips():
+    from telegram.error import Conflict, NetworkError, TimedOut
+
+    notifier = FakeNotifier()
+    handler = bot.MakeErrorHandler(notifier)
+    context = MagicMock()
+    for transient in (NetworkError("down"), TimedOut()):
+        context.error = transient
+        await handler(None, context)
+    notifier.ReportFailure.assert_not_awaited()
+    for real in (ValueError("bug"), Conflict("two instances")):
+        context.error = real
+        await handler(None, context)
+    assert notifier.ReportFailure.await_count == 2
+
+
+async def test_error_handler_describes_chat_of_update():
+    from telegram import Update as TgUpdate
+
+    notifier = FakeNotifier()
+    update = MagicMock(spec=TgUpdate)
+    update.effective_chat.type = "supergroup"
+    context = MagicMock()
+    context.error = ValueError("bug")
+    await bot.MakeErrorHandler(notifier)(update, context)
+    assert "supergroup" in notifier.ReportFailure.call_args[0][0]
+
+
+async def test_post_init_sends_startup_notification():
+    application = MagicMock()
+    application.bot_data = {}
+    application.bot.get_me = AsyncMock(return_value=MagicMock(username=BOT, can_read_all_group_messages=True))
+    notifier = FakeNotifier()
+    await bot.MakePostInit(notifier, "restart #1 after: X")(application)
+    notifier.NotifyStartup.assert_awaited_once_with(BOT, False, "restart #1 after: X")
+
+
+async def test_post_shutdown_closes_fetcher():
+    service = MagicMock()
+    service.fetcher.Close = AsyncMock()
+    await bot.MakePostShutdown(service)(MagicMock())
+    service.fetcher.Close.assert_awaited_once()
+
+
+def test_application_wires_error_handler_and_hooks(store, registry):
+    app = BuildApplication(Config("123:FAKE", "1", "x"), store, registry, FakeService(), "restart #1 after: X")
+    assert app.error_handlers and app.post_init is not None and app.post_shutdown is not None
+
+
+def test_log_filter_redacts_token_in_messages_and_tracebacks():
+    import logging
+
+    filterer = bot.RedactingFilter(["123:SECRET-TOKEN"])
+    try:
+        raise RuntimeError("The token `123:SECRET-TOKEN` was rejected")
+    except RuntimeError:
+        import sys
+
+        record = logging.LogRecord("x", logging.ERROR, __file__, 1, "failed with %s", ("123:SECRET-TOKEN",), sys.exc_info())
+    filterer.filter(record)
+    formatted = logging.Formatter("%(message)s").format(record)
+    assert "SECRET-TOKEN" not in formatted and "failed with ***" in formatted and "was rejected" in formatted

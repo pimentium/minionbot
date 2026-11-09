@@ -8,12 +8,14 @@ from pathlib import Path
 
 from telegram import InputMediaPhoto, InputMediaVideo, LinkPreviewOptions, Message, MessageEntity, Update
 from telegram.constants import ChatAction, ChatType
+from telegram.error import Conflict, NetworkError
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
 from minionbot.commands import UNKNOWN_COMMAND_TEXT, CommandRegistry
 from minionbot.config import Config
+from minionbot.notify import Notifier
 from minionbot.social.format import BuildTexts
-from minionbot.social.models import PHOTO, DownloadError, LocalMedia, Post
+from minionbot.social.models import PHOTO, DownloadError, LocalMedia, Post, UnexpectedDownloadError
 from minionbot.social.service import SocialService
 from minionbot.social.triggers import IGNORE, NO_LINKS, Decide, Incoming
 from minionbot.users import UserStore
@@ -33,13 +35,17 @@ NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 UPLOAD_TIMEOUT = 180
 
 
-def MakeCommandCallback(registry: CommandRegistry, store: UserStore, name: str):
+def MakeCommandCallback(registry: CommandRegistry, store: UserStore, name: str, notifier: Notifier | None = None):
     async def Callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user, message = update.effective_user, update.effective_message
         if user is None or message is None:
             return
-        reply = registry.Dispatch(name, list(context.args or []), user.id, user.username, store)
+        errors: list[Exception] = []
+        reply = registry.Dispatch(name, list(context.args or []), user.id, user.username, store, onError=errors.append)
         await message.reply_text(reply)
+        for error in errors:
+            if notifier:
+                await notifier.ReportFailure(f"command /{name}", error)
 
     return Callback
 
@@ -116,7 +122,7 @@ async def ReplyWithPost(message: Message, post: Post) -> None:
         await message.reply_text(text, link_preview_options=NO_PREVIEW)
 
 
-def MakeMessageCallback(store: UserStore, service: SocialService):
+def MakeMessageCallback(store: UserStore, service: SocialService, notifier: Notifier | None = None):
     async def Callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message, sender, chat = update.effective_message, update.effective_user, update.effective_chat
         if message is None or sender is None or chat is None:
@@ -154,9 +160,13 @@ def MakeMessageCallback(store: UserStore, service: SocialService):
                     await ReplyWithPost(message, post)
                 except DownloadError as error:
                     await message.reply_text(f"{error}\n{link.url}", link_preview_options=NO_PREVIEW)
-                except Exception:
+                    if isinstance(error, UnexpectedDownloadError) and notifier:
+                        await notifier.ReportFailure(f"downloading a {link.network} link", error.__cause__ or error)
+                except Exception as error:
                     LOGGER.exception("Failed to reply for %s", link.url)
                     await message.reply_text(f"Sorry, I couldn't send the result for {link.url}", link_preview_options=NO_PREVIEW)
+                    if notifier:
+                        await notifier.ReportFailure(f"sending the result of a {link.network} link", error)
 
     return Callback
 
@@ -172,16 +182,89 @@ async def LogBotInfo(application: Application) -> None:
     LOGGER.info("Running as @%s; group privacy mode: %s", me.username, privacy)
 
 
-def BuildApplication(config: Config, store: UserStore, registry: CommandRegistry, service: SocialService) -> Application:
-    application = (
-        ApplicationBuilder().token(config.botToken).concurrent_updates(True).read_timeout(30).write_timeout(UPLOAD_TIMEOUT).post_init(LogBotInfo).build()
-    )
+def MakePostInit(notifier: Notifier, restartInfo: str = ""):
+    async def PostInit(application: Application) -> None:
+        await LogBotInfo(application)
+        me = await application.bot.get_me()
+        await notifier.NotifyStartup(me.username, application.bot_data.get(PRIVACY_ON_KEY), restartInfo)
+
+    return PostInit
+
+
+def MakeErrorHandler(notifier: Notifier):
+    """Handler for exceptions raised outside our own try/except blocks (and polling errors)."""
+
+    async def OnError(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        error = context.error
+        if error is None:
+            return
+        where = "polling / updates"
+        if isinstance(update, Update) and update.effective_chat is not None:
+            where = f"handling an update in a {update.effective_chat.type} chat"
+        if isinstance(error, NetworkError) and not isinstance(error, Conflict):
+            LOGGER.warning("Network problem (will retry): %s: %s", type(error).__name__, error)
+            return
+        LOGGER.error("Unhandled error while %s", where, exc_info=error)
+        await notifier.ReportFailure(where, error)
+
+    return OnError
+
+
+def MakePostShutdown(service: SocialService):
+    async def PostShutdown(application: Application) -> None:
+        fetcher = getattr(service, "fetcher", None)
+        if fetcher is not None:
+            await fetcher.Close()
+
+    return PostShutdown
+
+
+def BuildApplication(
+    config: Config, store: UserStore, registry: CommandRegistry, service: SocialService, restartInfo: str = ""
+) -> Application:
+    builder = ApplicationBuilder().token(config.botToken).concurrent_updates(True).read_timeout(30).write_timeout(UPLOAD_TIMEOUT)
+    application = builder.build()
+    secrets = [config.botToken] + [v for a in config.accounts.values() for v in (a.sessionId, a.authToken)]
+    notifier = Notifier(application.bot, store, secrets)
+    application.post_init = MakePostInit(notifier, restartInfo)
+    application.post_shutdown = MakePostShutdown(service)
+    application.add_error_handler(MakeErrorHandler(notifier))
     # Commands work in private chats only (they expose the user list).
     for name in registry.Names():
-        application.add_handler(CommandHandler(name, MakeCommandCallback(registry, store, name), filters=PRIVATE))
+        application.add_handler(CommandHandler(name, MakeCommandCallback(registry, store, name, notifier), filters=PRIVATE))
     # Everything else: social links, mentions, strangers, unknown commands.
-    application.add_handler(MessageHandler(filters.ALL, MakeMessageCallback(store, service)))
+    application.add_handler(MessageHandler(filters.ALL, MakeMessageCallback(store, service, notifier)))
     return application
+
+
+class RedactingFilter(logging.Filter):
+    """Replace secrets (bot token, session cookies) in every log line and traceback.
+
+    python-telegram-bot puts the full bot token into some error messages, so this is not optional.
+    """
+
+    def __init__(self, secrets: list[str]):
+        super().__init__()
+        self.secrets = [secret for secret in secrets if secret]
+
+    def Scrub(self, text: str) -> str:
+        for secret in self.secrets:
+            text = text.replace(secret, "***")
+        return text
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = self.Scrub(record.getMessage())
+        record.args = ()
+        if record.exc_info:
+            record.exc_text = self.Scrub(logging.Formatter().formatException(record.exc_info))
+        elif record.exc_text:
+            record.exc_text = self.Scrub(record.exc_text)
+        return True
+
+
+def RedactSecrets(secrets: list[str]) -> None:
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(RedactingFilter(secrets))
 
 
 def ConfigureLogging() -> None:
