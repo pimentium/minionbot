@@ -70,6 +70,16 @@ may never arrive. Fix: in @BotFather send `/setprivacy`, pick the bot, choose **
 bot from the group and add it again** (or make it a group admin). At startup the bot logs whether privacy
 mode is ON or OFF, and every received message is logged (chat type, user id, decision, number of links).
 
+### Link cleaning
+
+Links are reduced to what identifies the post before anything is downloaded, so tracking noise never reaches
+the networks: Instagram, Twitter/X and Threads keep only the path (no `igsh`, `rpxt`, `stkn`, `s`, `t`, `xmt`,
+...); Facebook keeps only the path for `/user/posts/pfbid...`, `/reel/`, `/share/`, `fb.watch` links and for
+the older query-based forms only the identifying parameters (`watch/?v=`, `photo.php?fbid=`,
+`permalink.php` / `story.php` with `story_fbid` and `id`). Fragments are dropped, mobile hosts (`m.`, `web.`,
+`mobile.`, `mbasic.`) become the normal host, and the same post linked twice with different tracking is
+answered once.
+
 ### Accounts
 
 Networks block anonymous access, so give the bot a logged-in **browser session**. Username/password login

@@ -36,6 +36,8 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
 - httpx logging is lowered to WARNING because its URLs contain the bot token.
 - New commands: write `Handler(context) -> str`, register in `BuildRegistry` with help lines/permission.
 
+- Link cleaning (`links.py`) is an ALLOWLIST: keep the path (or for old Facebook forms only v / fbid /
+  story_fbid+id), drop every other parameter and fragment; never switch to a blocklist of tracking params.
 - Social downloads: downloaders return a `RemotePost` (URLs only); `MediaFetcher` downloads files.
   gallery-dl runs as a subprocess with `-j`; cookies go via a temp 0600 config, never argv.
 - Auth is browser-session only (Instagram `sessionid`, Twitter `auth_token`, Facebook cookies file). Username/
