@@ -156,3 +156,29 @@ def test_twitter_total_failure(monkeypatch):
     monkeypatch.setattr(gallerydl.subprocess, "run", SequencedRun([AUTH_ERROR], []))
     with pytest.raises(DownloadError):
         GalleryDlDownloader("twitter").Fetch("https://x.com/jack/status/20")
+
+
+# Shape captured from a real anonymous gallery-dl run on a public Facebook photo post (text replaced by a placeholder).
+def FacebookPhoto(photoId, postText="Post text line 1\nline 2", caption=""):
+    meta = {
+        "caption": caption, "category": "facebook", "extension": "jpg", "id": photoId, "num": 1,
+        "post_text": postText, "post_photo": "https://www.facebook.com/photo.php?fbid=1", "set_id": "pcb.1",
+        "title": "Photos from Some Author's post", "user_id": "1", "user_pfbid": "", "username": "Some Author",
+    }
+    return (f"https://scontent.example/{photoId}.jpg?stp=dst-jpg", meta)
+
+
+def test_facebook_post_text_is_used_and_title_is_not():
+    post = ParseGeneric("facebook", "u", [FacebookPhoto("a"), FacebookPhoto("b")])
+    assert post.text == "Post text line 1\nline 2" and post.author == "Some Author"
+    assert len(post.media) == 2 and all(m.kind == PHOTO for m in post.media)
+
+
+def test_facebook_post_without_text_has_empty_text_not_generated_title():
+    post = ParseGeneric("facebook", "u", [FacebookPhoto("a", postText="")])
+    assert post.text == ""
+
+
+def test_facebook_falls_back_to_photo_caption():
+    post = ParseGeneric("facebook", "u", [FacebookPhoto("a", postText="", caption="single photo caption")])
+    assert post.text == "single photo caption"

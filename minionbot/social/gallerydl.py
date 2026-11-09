@@ -22,7 +22,9 @@ LOGGER = logging.getLogger(__name__)
 URL_MESSAGE = 3
 PHOTO_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 VIDEO_EXTENSIONS = {"mp4", "webm", "mov", "m4v", "gif"}  # gallery-dl serves Twitter GIFs as mp4
-TEXT_KEYS = ("content", "message", "caption", "description", "text", "title")
+# "title" is deliberately absent: on Facebook it is a generated "Photos from X's post". post_text (Facebook) is the
+# whole post, "caption" only a single photo's caption.
+TEXT_KEYS = ("post_text", "content", "message", "caption", "description", "text")
 
 
 def MediaKind(url: str, meta: dict) -> str | None:
