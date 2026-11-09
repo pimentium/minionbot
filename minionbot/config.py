@@ -52,7 +52,7 @@ def LoadConfig(
     token = (botToken or env.get("BOT_TOKEN", "")).strip()
     owner = (initialUser or env.get("INITIAL_USER", "")).strip()
     if not token:
-        raise ConfigError("Bot token is not set (--token or BOT_TOKEN, see .env.example)")
+        raise ConfigError("Bot token is not set (--token or BOT_TOKEN)")
     if not owner:
         raise ConfigError("Initial user is not set (--initial-user or INITIAL_USER): the bot needs at least one user on start")
     return Config(

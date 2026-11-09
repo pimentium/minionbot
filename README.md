@@ -7,8 +7,8 @@ A personal Telegram bot. It ignores everyone except users you add explicitly.
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
-cp .env.example .env        # then edit: BOT_TOKEN, INITIAL_USER
-.venv/bin/python main.py
+# pass options on the command line (see below), or put BOT_TOKEN=... and INITIAL_USER=... into a .env file
+.venv/bin/python main.py --token <BOT_TOKEN> --initial-user <YOUR_TELEGRAM_ID>
 ```
 
 - `BOT_TOKEN`: create a bot with [@BotFather](https://t.me/BotFather).

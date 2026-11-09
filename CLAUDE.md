@@ -9,6 +9,8 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
 - Every new script/change needs pytest tests (external services mocked). Always state what was verified
   against real Telegram vs only mocked.
 - Ask clarifying questions / push back before building; recommend, don't survey.
+- No `.env.example`: do not create, use, update or document one (owner's decision). `.env` itself is still
+  read if present.
 - Keep it runnable locally and Docker-friendly (env-based config, state under `data/`).
 
 ## Layout
