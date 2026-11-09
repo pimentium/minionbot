@@ -55,11 +55,16 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
   Application) is rebuilt per attempt. Fatal = `InvalidToken` only. Unexpected failures are reported via
   `Notifier.ReportFailure`; expected `DownloadError`s are not (only `UnexpectedDownloadError`). Process-level
   restarts are left to Docker/systemd.
+- `/restart` = clean stop + `os.execve` of `sys.orig_argv` with the pre-`.env` environment (same pid, reloads
+  code/.env; reason passed via internal `MINIONBOT_RESTART_REASON`). `/shutdown` = clean stop, exit 0. Both are
+  `ownerOnly` commands (owner flag, not permissions: all users have `*`). Docker/systemd must use
+  restart-on-failure, not always/unless-stopped. `minionbot/control.py` is the command -> main signal.
 - PTB prints the bot token in some exceptions: `RedactSecrets` installs a log filter; keep it.
 
 ## Verification status
 Tests use mocks/fixtures. Checked against real Telegram with a FAKE token only: invalid token exits fatally, two
-run_polling calls in one process work. Owner notifications and crash/restart are NOT verified live. Verified live by the owner: Instagram (sessionid) and Twitter (auth_token) downloads.
+run_polling calls in one process work. Owner notifications, /restart, /shutdown and crash/restart are NOT verified live (re-exec itself was checked
+with a probe script, as script and as `-m`). Verified live by the owner: Instagram (sessionid) and Twitter (auth_token) downloads.
 NOT verified: Facebook, Threads, and the video aspect-ratio fix in real Telegram. The MP4 reader was checked
 against ffprobe on generated files.
 

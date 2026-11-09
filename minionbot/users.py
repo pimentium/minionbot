@@ -99,6 +99,8 @@ class UserStore:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             self.users = [User.FromDict(item) for item in data["users"]]
+            if self.users and not any(user.owner for user in self.users):
+                self.users[0].owner = True  # files written before owners existed: the first user is the owner
         except (OSError, ValueError, KeyError, TypeError) as error:
             # Refuse to continue: silently starting empty would overwrite the file.
             raise UserError(f"Cannot read users file {self.path}: {error}") from error

@@ -22,6 +22,7 @@ class CommandContext:
     username: str | None
     user: User | None
     args: list[str]
+    control: object | None = None  # BotControl, to request restart/shutdown
 
 
 CommandFunction = Callable[[CommandContext], str]
@@ -33,6 +34,7 @@ class Command:
 
     permission: required user permission (None = any configured user).
     public: callable even by unknown users (only for harmless commands).
+    ownerOnly: only the owner may run it, regardless of permissions.
     help: (syntax, description) lines shown by /help; empty = hidden.
     """
 
@@ -41,6 +43,7 @@ class Command:
     help: tuple[tuple[str, str], ...] = ()
     permission: str | None = None
     public: bool = False
+    ownerOnly: bool = False  # only the owner, whatever permissions others have (e.g. "*")
 
 
 class CommandRegistry:
@@ -60,6 +63,8 @@ class CommandRegistry:
             return True
         if user is None:
             return False
+        if command.ownerOnly and not user.owner:
+            return False
         return command.permission is None or user.HasPermission(command.permission)
 
     def Available(self, user: User | None) -> list[Command]:
@@ -73,6 +78,7 @@ class CommandRegistry:
         username: str | None,
         store: UserStore,
         onError: Callable[[Exception], None] | None = None,
+        control: object | None = None,
     ) -> str:
         user = store.Authenticate(telegramId, username)
         command = self.commands.get(name)
@@ -82,7 +88,7 @@ class CommandRegistry:
             return store.DeniedText()
         if not self.CanRun(command, user):
             return f"You don't have permission to use /{name}."
-        context = CommandContext(store, self, telegramId, username, user, args)
+        context = CommandContext(store, self, telegramId, username, user, args, control)
         try:
             return command.handler(context)
         except UserError as error:

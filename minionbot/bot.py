@@ -13,6 +13,7 @@ from telegram.ext import Application, ApplicationBuilder, CommandHandler, Contex
 
 from minionbot.commands import UNKNOWN_COMMAND_TEXT, CommandRegistry
 from minionbot.config import Config
+from minionbot.control import BotControl
 from minionbot.notify import Notifier
 from minionbot.social.format import BuildTexts
 from minionbot.social.models import PHOTO, DownloadError, LocalMedia, Post, UnexpectedDownloadError
@@ -35,14 +36,19 @@ NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 UPLOAD_TIMEOUT = 180
 
 
-def MakeCommandCallback(registry: CommandRegistry, store: UserStore, name: str, notifier: Notifier | None = None):
+def MakeCommandCallback(
+    registry: CommandRegistry, store: UserStore, name: str, notifier: Notifier | None = None, control: BotControl | None = None
+):
     async def Callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user, message = update.effective_user, update.effective_message
         if user is None or message is None:
             return
         errors: list[Exception] = []
-        reply = registry.Dispatch(name, list(context.args or []), user.id, user.username, store, onError=errors.append)
+        reply = registry.Dispatch(name, list(context.args or []), user.id, user.username, store, onError=errors.append, control=control)
         await message.reply_text(reply)
+        if control is not None and control.requested:
+            LOGGER.warning("Stopping the bot on the owner's request: %s", control.requested)
+            context.application.stop_running()
         for error in errors:
             if notifier:
                 await notifier.ReportFailure(f"command /{name}", error)
@@ -220,7 +226,12 @@ def MakePostShutdown(service: SocialService):
 
 
 def BuildApplication(
-    config: Config, store: UserStore, registry: CommandRegistry, service: SocialService, restartInfo: str = ""
+    config: Config,
+    store: UserStore,
+    registry: CommandRegistry,
+    service: SocialService,
+    restartInfo: str = "",
+    control: BotControl | None = None,
 ) -> Application:
     builder = ApplicationBuilder().token(config.botToken).concurrent_updates(True).read_timeout(30).write_timeout(UPLOAD_TIMEOUT)
     application = builder.build()
@@ -231,7 +242,7 @@ def BuildApplication(
     application.add_error_handler(MakeErrorHandler(notifier))
     # Commands work in private chats only (they expose the user list).
     for name in registry.Names():
-        application.add_handler(CommandHandler(name, MakeCommandCallback(registry, store, name, notifier), filters=PRIVATE))
+        application.add_handler(CommandHandler(name, MakeCommandCallback(registry, store, name, notifier, control), filters=PRIVATE))
     # Everything else: social links, mentions, strangers, unknown commands.
     application.add_handler(MessageHandler(filters.ALL, MakeMessageCallback(store, service, notifier)))
     return application

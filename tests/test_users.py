@@ -29,6 +29,7 @@ def test_initial_user_created_once(tmp_path):
 def test_persistence_roundtrip(tmp_path):
     path = tmp_path / "sub" / "u.json"
     store = UserStore(path)
+    store.EnsureInitialUser("1")
     store.Add(UserRef(telegramId=7), name="bob", permissions=["admin"])
     reloaded = UserStore(path)
     assert [u.ToDict() for u in reloaded.List()] == [u.ToDict() for u in store.List()]
@@ -112,3 +113,10 @@ def test_owner_falls_back_to_first_user_for_old_files(tmp_path):
     path = tmp_path / "u.json"
     path.write_text(json.dumps({"users": [{"name": "boss", "telegramId": 1, "username": None, "permissions": ["*"]}]}))
     assert UserStore(path).GetOwner().name == "boss"
+
+
+def test_first_user_of_an_old_file_becomes_owner(tmp_path):
+    path = tmp_path / "u.json"
+    path.write_text(json.dumps({"users": [{"name": "a", "telegramId": 1, "permissions": ["*"]}, {"name": "b", "telegramId": 2, "permissions": ["*"]}]}))
+    users = UserStore(path).List()
+    assert [u.owner for u in users] == [True, False]

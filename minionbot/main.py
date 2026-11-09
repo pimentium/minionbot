@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
+import sys
 from typing import Sequence
 
 from dotenv import load_dotenv
@@ -13,6 +15,7 @@ from telegram.error import InvalidToken
 from minionbot.bot import BuildApplication, ConfigureLogging, RedactSecrets
 from minionbot.builtin import BuildRegistry
 from minionbot.config import LoadConfig
+from minionbot.control import RESTART, BotControl
 from minionbot.social.factory import BuildDownloaders
 from minionbot.social.fetch import MediaFetcher
 from minionbot.social.instagram import InstagramDownloader
@@ -42,6 +45,23 @@ def AccountOverrides(args: argparse.Namespace) -> dict[str, SocialAccount]:
     }
 
 
+RESTART_REASON_ENV = "MINIONBOT_RESTART_REASON"  # internal: tells the re-executed process why it restarted
+RESTART_REASON = "requested by the owner (/restart)"
+
+
+def ReExec(originalEnv: dict[str, str]) -> None:
+    """Replace this process with a fresh one running the same command (picks up new code and .env changes)."""
+    env = dict(originalEnv)
+    env[RESTART_REASON_ENV] = RESTART_REASON
+    logging.getLogger(__name__).warning("Restarting the process")
+    logging.shutdown()
+    try:
+        os.execve(sys.executable, [sys.executable, *sys.orig_argv[1:]], env)
+    except OSError as error:
+        logging.getLogger(__name__).critical("Could not restart the process: %s", error)
+        raise SystemExit(1) from None
+
+
 def IsFatal(error: BaseException) -> bool:
     """Errors that restarting cannot fix."""
     return isinstance(error, InvalidToken)
@@ -49,6 +69,8 @@ def IsFatal(error: BaseException) -> bool:
 
 def Main(argv: Sequence[str] | None = None) -> None:
     args = ParseArgs(argv)
+    originalEnv = dict(os.environ)  # before .env is loaded, so a restart re-reads .env
+    startReason = os.environ.pop(RESTART_REASON_ENV, "")
     load_dotenv()
     ConfigureLogging()
     config = LoadConfig(botToken=args.token, initialUser=args.initial_user, usersFile=args.users_file, accountOverrides=AccountOverrides(args))
@@ -57,6 +79,8 @@ def Main(argv: Sequence[str] | None = None) -> None:
     store = UserStore(config.usersFile)
     owner = store.EnsureInitialUser(config.initialUser)
     logging.getLogger(__name__).info("Starting with %d user(s); initial user: %s", len(store.List()), owner.name)
+
+    finalAction: dict[str, str | None] = {"requested": None}
 
     def RunOnce(restartCount: int, lastError: str) -> None:
         # Everything that holds an event loop (HTTP clients, the application) is rebuilt on every restart.
@@ -68,10 +92,12 @@ def Main(argv: Sequence[str] | None = None) -> None:
             except DownloadError as error:
                 logging.getLogger(__name__).warning("Instagram login at startup failed; will retry on first link: %s", error)
         service = SocialService(downloaders, MediaFetcher())
-        restartInfo = f"restart #{restartCount} after: {lastError}" if restartCount else ""
-        application = BuildApplication(config, store, BuildRegistry(), service, restartInfo)
+        restartInfo = f"restart #{restartCount} after: {lastError}" if restartCount else startReason
+        control = BotControl()
+        application = BuildApplication(config, store, BuildRegistry(), service, restartInfo, control)
         asyncio.set_event_loop(asyncio.new_event_loop())
         application.run_polling()
+        finalAction["requested"] = control.requested
 
     def Scrub(text: str) -> str:
         for secret in secrets:
@@ -86,6 +112,9 @@ def Main(argv: Sequence[str] | None = None) -> None:
             raise
         # Already logged (redacted). Exit without Python's own traceback, which would print the bot token.
         raise SystemExit(1) from None
+    if finalAction["requested"] == RESTART:
+        ReExec(originalEnv)
+    logging.getLogger(__name__).info("Bot stopped")
 
 
 if __name__ == "__main__":

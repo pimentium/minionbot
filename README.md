@@ -37,6 +37,8 @@ All config can also be set via environment variables, so Docker works with `--en
 | `/users list` | `admin` | list users |
 | `/users add <id\|@username> [name] [perms=a,b]` | `admin` | add a user (default permissions: all) |
 | `/users remove <id\|@username\|name>` | `admin` | remove a user (not yourself, not the last one) |
+| `/restart` | owner only | restart the bot process (picks up code and `.env` changes) |
+| `/shutdown` | owner only | stop the bot |
 
 Users added by `@username` are linked to their numeric ID on first message; after that only the ID
 counts, so a re-assigned username gives no access. Prefer numeric IDs.
@@ -106,8 +108,14 @@ messages.
   (the counter resets after a run that lasted a minute); the next start-up message says
   `Restarted: restart #N after: <error>`. An invalid bot token is fatal (exit code 1, no retry). Ctrl+C / SIGTERM
   stop the bot normally.
-- **Hard crashes:** if the whole process dies (out of memory, killed), only an outer supervisor can restart it.
-  In Docker use `restart: unless-stopped`; with systemd use `Restart=always`.
+- **/restart and /shutdown:** only the owner can use them, even though other users have all permissions.
+  `/restart` stops the bot cleanly and re-executes the same command in the same process id, so new code
+  and `.env` changes are picked up; the next start-up message says `Restarted: requested by the owner
+  (/restart)`. `/shutdown` stops the bot and exits with code 0; it stays down until someone starts it on
+  its host. Both work in private chat only.
+- **Hard crashes:** if the whole process dies (out of memory, killed), only an outer supervisor can restart
+  it. Use `restart: on-failure` in Docker compose or `Restart=on-failure` in systemd. Do **not** use
+  `always` / `unless-stopped`: they would also bring the bot back after `/shutdown` (exit code 0).
 - **Logs:** the bot token and session cookies are redacted from all log output (python-telegram-bot itself
   prints the token in some error messages).
 

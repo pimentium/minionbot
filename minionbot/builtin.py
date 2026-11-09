@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from minionbot.commands import Command, CommandContext, CommandRegistry
+from minionbot.control import RESTART, SHUTDOWN
 from minionbot.users import ADMIN_PERMISSION, ParseUserRef, UserError
 
 USERS_USAGE = (
@@ -77,6 +78,21 @@ def UsersRemove(context: CommandContext, args: list[str]) -> str:
     return f"Removed {user.name}."
 
 
+def RequestControl(context: CommandContext, action: str, text: str) -> str:
+    if context.control is None:
+        raise UserError("This command is not available here.")
+    context.control.Request(action)
+    return text
+
+
+def RestartCommand(context: CommandContext) -> str:
+    return RequestControl(context, RESTART, "Restarting...")
+
+
+def ShutdownCommand(context: CommandContext) -> str:
+    return RequestControl(context, SHUTDOWN, "Shutting down. Start the bot again on its host to bring it back.")
+
+
 def BuildRegistry() -> CommandRegistry:
     registry = CommandRegistry()
     registry.Register(Command("start", HelpCommand))
@@ -100,5 +116,11 @@ def BuildRegistry() -> CommandRegistry:
                 ("/users remove <id|@username|name>", "remove a user"),
             ),
         )
+    )
+    registry.Register(
+        Command("restart", RestartCommand, help=(("/restart", "restart the bot (owner only)"),), ownerOnly=True)
+    )
+    registry.Register(
+        Command("shutdown", ShutdownCommand, help=(("/shutdown", "stop the bot (owner only)"),), ownerOnly=True)
     )
     return registry
