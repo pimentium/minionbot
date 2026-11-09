@@ -1,4 +1,4 @@
-from minionbot.commands import DENIED_TEXT, UNKNOWN_COMMAND_TEXT, Command, CommandRegistry
+from minionbot.commands import UNKNOWN_COMMAND_TEXT, Command, CommandRegistry
 from minionbot.users import UserRef
 
 from tests.conftest import OWNER_ID, STRANGER_ID
@@ -11,10 +11,10 @@ def Run(registry, store, text, telegramId=OWNER_ID, username=None):
 
 def test_stranger_is_denied_everything_but_whoami(registry, store):
     for text in ["/help", "/users list", "/start", "/nonexistent"]:
-        assert Run(registry, store, text, STRANGER_ID) == DENIED_TEXT
+        assert Run(registry, store, text, STRANGER_ID) == store.DeniedText()
     reply = Run(registry, store, "/whoami", STRANGER_ID, "bob")
     assert str(STRANGER_ID) in reply and "not granted" in reply
-    assert registry.DispatchFallback(STRANGER_ID, None, store) == DENIED_TEXT
+    assert registry.DispatchFallback(STRANGER_ID, None, store) == store.DeniedText()
 
 
 def test_known_user_unknown_command(registry, store):

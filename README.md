@@ -46,6 +46,52 @@ Permissions: `*` means everything (the default, so for now every user can run ev
 
 Strangers get "Access denied." for everything except `/whoami`. The bot only answers in private chats.
 
+## Social network downloads
+
+Send (or forward) a link to a post and the bot replies with the post's images/videos, its text and
+the author. One reply per link. Supported: Instagram, Facebook, Twitter/X, Threads. For Twitter/X the
+author's thread is combined into one reply (all parts' text in order, all media). Threads: the author's
+parts shown on the post page are combined.
+
+The bot reacts to:
+- any message in a private chat that contains such links;
+- in a group: a message that **@mentions the bot** and contains links;
+- in a group: a **reply** to a message with links whose text mentions the bot (typically just `@botname`).
+
+Only added users are served; everyone else gets "Please ask my owner @owner to allow me to help you too."
+The owner is the initial user (their @username is learned when they first message the bot). Group
+commands (`/users`, ...) are ignored; commands work in private chats only.
+
+**Groups need privacy mode off.** By default Telegram delivers to a bot in a group only commands and
+replies to the bot's own messages, so an `@botname` message or an `@botname` reply to someone else's message
+may never arrive. Fix: in @BotFather send `/setprivacy`, pick the bot, choose **Disable**, then **remove the
+bot from the group and add it again** (or make it a group admin). At startup the bot logs whether privacy
+mode is ON or OFF, and every received message is logged (chat type, user id, decision, number of links).
+
+### Accounts
+
+Networks block anonymous access, so give the bot a logged-in **browser session**. Username/password login
+is not supported (it is flaky, triggers 2FA/challenges, and gallery-dl dropped it for Twitter). All options
+are optional; command-line values win over env vars / `.env`.
+
+| Network | Option (env var) | Where to get it |
+|---|---|---|
+| Instagram | `--instagram-session-id` (`INSTAGRAM_SESSION_ID`) | value of the `sessionid` cookie on instagram.com |
+| Twitter/X | `--twitter-auth-token` (`TWITTER_AUTH_TOKEN`) | value of the `auth_token` cookie on x.com |
+| Facebook | `--facebook-cookies FILE` (`FACEBOOK_COOKIES_FILE`) | Netscape cookies file exported from your browser |
+| Threads | none | public posts are read anonymously (best effort) |
+
+Cookie values: browser dev tools, Application (Chrome) / Storage (Firefox), Cookies. `--twitter-cookies` and
+`--instagram-cookies` (files) also exist. These values work like passwords: keep them out of git and chat,
+and prefer env vars/`.env` over the command line (visible in `ps`). Logging out in that browser invalidates
+them, and a bot sharing a session with your browser can get you logged out there, so use a separate profile
+or account. Without a Twitter session only single public tweets work (no threads).
+
+Videos are sent with their real width/height/duration (read from the MP4 header) so Telegram shows the
+correct aspect ratio. Videos over 50 MB (Telegram's bot limit) and photos over 10 MB are skipped with a note
+and the original link. Albums are sent in groups of 10. Text that doesn't fit a 1024-char caption follows as
+messages.
+
 ## Tests
 
 ```bash

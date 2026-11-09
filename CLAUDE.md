@@ -17,6 +17,10 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
 - `minionbot/builtin.py`: /start /help /whoami /users; `BuildRegistry()` is where new commands go.
 - `minionbot/bot.py`: thin telegram adapter. `main.py` (repo root) and `python -m minionbot.main`: entry points.
 
+- `minionbot/social/`: `links.py` (URL classification), `triggers.py` (when to react / which links),
+  `instagram.py` (instagrapi, sessionid cookie), `gallerydl.py` (Twitter/Facebook + Twitter thread merge), `threads.py`
+  (custom page reader), `fetch.py` (media download + size limits), `videoinfo.py` (pure-Python MP4 width/height/duration), `format.py`, `service.py`, `factory.py`.
+
 ## Decisions
 - Users identified by numeric ID or @username; username entries bind to the ID on first contact.
 - Admin = `admin` permission flag (no secret typed in chat). Default permission `*` = all commands,
@@ -26,6 +30,26 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
 - Config precedence: CLI args (`--token`, `--initial-user`, `--users-file`) > env/.env > defaults.
 - httpx logging is lowered to WARNING because its URLs contain the bot token.
 - New commands: write `Handler(context) -> str`, register in `BuildRegistry` with help lines/permission.
+
+- Social downloads: downloaders return a `RemotePost` (URLs only); `MediaFetcher` downloads files.
+  gallery-dl runs as a subprocess with `-j`; cookies go via a temp 0600 config, never argv.
+- Auth is browser-session only (Instagram `sessionid`, Twitter `auth_token`, Facebook cookies file). Username/
+  password + 2FA support was removed on purpose (owner confirmed sessions work; gallery-dl dropped Twitter
+  password login; Facebook/Threads never had it).
+- Videos are sent with width/height/duration from `videoinfo.py`; without them Telegram guesses the shape
+  and shows landscape videos wrongly. Rotation matrix is honored. Fixtures in `tests/data` made with ffmpeg.
+- gallery-dl and yt-dlp do NOT support Threads, hence the custom reader (fragile, anonymous only).
+- Strangers get `store.DeniedText()` ("Please ask my owner @x ...") everywhere; owner = user with
+  `owner: true` (initial user), else first user. Usernames are refreshed on contact.
+- Groups only work reliably with BotFather privacy mode DISABLED (+ re-add the bot); logged at startup via
+  `can_read_all_group_messages`. Do not claim @mentions are delivered under privacy mode (unverified).
+- Group handling: react only to @mention (+ replies to a message when the reply mentions the bot).
+  Updates are processed concurrently (downloads are slow).
+
+## Verification status
+Tests use mocks/fixtures. Verified live by the owner: Instagram (sessionid) and Twitter (auth_token) downloads.
+NOT verified: Facebook, Threads, and the video aspect-ratio fix in real Telegram. The MP4 reader was checked
+against ffprobe on generated files.
 
 ## Not yet
 Dockerfile/compose, real-Telegram verification.

@@ -1,10 +1,13 @@
-"""Configuration from environment variables (optionally loaded from .env)."""
+"""Configuration from environment variables (optionally loaded from .env) and command-line overrides."""
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Mapping
+
+from minionbot.social.factory import NETWORKS
+from minionbot.social.models import SocialAccount
 
 DEFAULT_USERS_FILE = "data/users.json"
 
@@ -18,6 +21,23 @@ class Config:
     botToken: str
     initialUser: str
     usersFile: str
+    accounts: dict[str, SocialAccount] = field(default_factory=dict)
+
+
+def LoadAccounts(env: Mapping[str, str], overrides: Mapping[str, SocialAccount] | None) -> dict[str, SocialAccount]:
+    """Per network: command-line value wins, then <NETWORK>_COOKIES_FILE / _AUTH_TOKEN / _SESSION_ID."""
+    accounts: dict[str, SocialAccount] = {}
+    for network in NETWORKS:
+        prefix = network.upper()
+        override = (overrides or {}).get(network, SocialAccount())
+        account = SocialAccount(
+            cookiesFile=(override.cookiesFile or env.get(f"{prefix}_COOKIES_FILE", "")).strip(),
+            authToken=(override.authToken or env.get(f"{prefix}_AUTH_TOKEN", "")).strip(),
+            sessionId=(override.sessionId or env.get(f"{prefix}_SESSION_ID", "")).strip(),
+        )
+        if account.IsSet():
+            accounts[network] = account
+    return accounts
 
 
 def LoadConfig(
@@ -25,6 +45,7 @@ def LoadConfig(
     botToken: str | None = None,
     initialUser: str | None = None,
     usersFile: str | None = None,
+    accountOverrides: Mapping[str, SocialAccount] | None = None,
 ) -> Config:
     """Explicit arguments (e.g. from the command line) win over environment variables."""
     env = os.environ if env is None else env
@@ -34,4 +55,9 @@ def LoadConfig(
         raise ConfigError("Bot token is not set (--token or BOT_TOKEN, see .env.example)")
     if not owner:
         raise ConfigError("Initial user is not set (--initial-user or INITIAL_USER): the bot needs at least one user on start")
-    return Config(token, owner, (usersFile or env.get("USERS_FILE", "")).strip() or DEFAULT_USERS_FILE)
+    return Config(
+        token,
+        owner,
+        (usersFile or env.get("USERS_FILE", "")).strip() or DEFAULT_USERS_FILE,
+        LoadAccounts(env, accountOverrides),
+    )

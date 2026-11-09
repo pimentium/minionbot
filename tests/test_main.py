@@ -23,10 +23,13 @@ def test_main_uses_cli_args_and_starts_polling(tmp_path, monkeypatch):
     build = MagicMock(return_value=application)
     monkeypatch.setattr(main, "BuildApplication", build)
     usersFile = tmp_path / "u.json"
-    main.Main(["--token", "123:FAKE", "--initial-user", "42", "--users-file", str(usersFile)])
+    monkeypatch.setattr(main, "MediaFetcher", MagicMock())
+    main.Main(["--token", "123:FAKE", "--initial-user", "42", "--users-file", str(usersFile), "--twitter-auth-token", "tok", "--instagram-session-id", "sess"])
     config = build.call_args[0][0]
     assert config.botToken == "123:FAKE" and config.initialUser == "42"
     assert '"telegramId": 42' in usersFile.read_text()
+    assert config.accounts["twitter"].authToken == "tok" and config.accounts["instagram"].sessionId == "sess"
+    assert build.call_args[0][3] is not None
     application.run_polling.assert_called_once()
 
 

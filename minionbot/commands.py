@@ -10,7 +10,6 @@ from minionbot.users import User, UserError, UserStore
 
 LOGGER = logging.getLogger(__name__)
 
-DENIED_TEXT = "Access denied."
 UNKNOWN_COMMAND_TEXT = "Unknown command. Try /help."
 INTERNAL_ERROR_TEXT = "Something went wrong."
 
@@ -70,9 +69,9 @@ class CommandRegistry:
         user = store.Authenticate(telegramId, username)
         command = self.commands.get(name)
         if command is None:
-            return DENIED_TEXT if user is None else UNKNOWN_COMMAND_TEXT
+            return store.DeniedText() if user is None else UNKNOWN_COMMAND_TEXT
         if not command.public and user is None:
-            return DENIED_TEXT
+            return store.DeniedText()
         if not self.CanRun(command, user):
             return f"You don't have permission to use /{name}."
         context = CommandContext(store, self, telegramId, username, user, args)
@@ -87,4 +86,4 @@ class CommandRegistry:
     def DispatchFallback(self, telegramId: int, username: str | None, store: UserStore) -> str:
         """Reply for anything that is not a registered command."""
         user = store.Authenticate(telegramId, username)
-        return DENIED_TEXT if user is None else UNKNOWN_COMMAND_TEXT
+        return store.DeniedText() if user is None else UNKNOWN_COMMAND_TEXT

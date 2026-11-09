@@ -95,4 +95,20 @@ def test_remove_and_last_user_protected(store):
 
 def test_file_contains_no_extra_secrets(store):
     data = json.loads(store.path.read_text())
-    assert set(data["users"][0]) == {"name", "telegramId", "username", "permissions"}
+    assert set(data["users"][0]) == {"name", "telegramId", "username", "permissions", "owner"}
+
+
+def test_owner_and_denied_text(tmp_path):
+    store = UserStore(tmp_path / "u.json")
+    owner = store.EnsureInitialUser("42")
+    assert owner.owner and store.GetOwner() is owner
+    assert store.DeniedText() == "Please ask my owner owner to allow me to help you too."
+    store.Authenticate(42, "MyName")  # owner's username is learned on contact
+    assert store.DeniedText() == "Please ask my owner @myname to allow me to help you too."
+    assert UserStore(tmp_path / "u.json").DeniedText() == store.DeniedText()
+
+
+def test_owner_falls_back_to_first_user_for_old_files(tmp_path):
+    path = tmp_path / "u.json"
+    path.write_text(json.dumps({"users": [{"name": "boss", "telegramId": 1, "username": None, "permissions": ["*"]}]}))
+    assert UserStore(path).GetOwner().name == "boss"

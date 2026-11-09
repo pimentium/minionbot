@@ -47,6 +47,7 @@ class User:
     telegramId: int | None = None
     username: str | None = None
     permissions: list[str] = field(default_factory=lambda: [ALL_PERMISSIONS])
+    owner: bool = False
 
     def HasPermission(self, permission: str) -> bool:
         return ALL_PERMISSIONS in self.permissions or permission in self.permissions
@@ -57,6 +58,7 @@ class User:
             "telegramId": self.telegramId,
             "username": self.username,
             "permissions": list(self.permissions),
+            "owner": self.owner,
         }
 
     @staticmethod
@@ -66,6 +68,7 @@ class User:
             telegramId=data.get("telegramId"),
             username=data.get("username"),
             permissions=list(data.get("permissions") or [ALL_PERMISSIONS]),
+            owner=bool(data.get("owner", False)),
         )
 
     def Describe(self) -> str:
@@ -144,6 +147,7 @@ class UserStore:
         with self.lock:
             for user in self.users:
                 if user.telegramId == telegramId:
+                    self._RefreshUsername(user, username)
                     return user
             if username:
                 lowered = username.lower()
@@ -153,6 +157,28 @@ class UserStore:
                         self._Save()
                         return user
             return None
+
+    def _RefreshUsername(self, user: User, username: str | None) -> None:
+        """Keep the stored username current (needed to name the owner in denial messages)."""
+        if username and username.lower() != user.username:
+            user.username = username.lower()
+            self._Save()
+
+    def GetOwner(self) -> User | None:
+        """The owner: the user flagged as such, else the first user."""
+        with self.lock:
+            for user in self.users:
+                if user.owner:
+                    return user
+            return self.users[0] if self.users else None
+
+    def DeniedText(self) -> str:
+        owner = self.GetOwner()
+        if owner is None:
+            who = "the owner"
+        else:
+            who = f"@{owner.username}" if owner.username else owner.name
+        return f"Please ask my owner {who} to allow me to help you too."
 
     # ---- mutations ---------------------------------------------------
 
@@ -198,4 +224,7 @@ class UserStore:
             name = "owner"
             while any(u.name.lower() == name for u in self.users):
                 name += "_"
-            return self.Add(ref, name=name, permissions=[ALL_PERMISSIONS])
+            created = self.Add(ref, name=name, permissions=[ALL_PERMISSIONS])
+            created.owner = True
+            self._Save()
+            return created
