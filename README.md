@@ -81,7 +81,7 @@ are optional; command-line values win over env vars / `.env`.
 | Instagram | `--instagram-session-id` (`INSTAGRAM_SESSION_ID`) | value of the `sessionid` cookie on instagram.com |
 | Twitter/X | `--twitter-auth-token` (`TWITTER_AUTH_TOKEN`) | value of the `auth_token` cookie on x.com |
 | Facebook | `--facebook-cookies FILE` (`FACEBOOK_COOKIES_FILE`) | Netscape cookies file exported from your browser |
-| Threads | none | public posts are read anonymously (best effort) |
+| Threads | none | public posts are read anonymously (best effort); the author's whole thread is combined |
 
 Cookie values: browser dev tools, Application (Chrome) / Storage (Firefox), Cookies. `--twitter-cookies` and
 `--instagram-cookies` (files) also exist. These values work like passwords: keep them out of git and chat,

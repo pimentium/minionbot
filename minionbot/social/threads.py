@@ -13,10 +13,22 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from minionbot.social.fetch import USER_AGENT
 from minionbot.social.models import PHOTO, VIDEO, DownloadError, RemoteMedia, RemotePost
 
 LOGGER = logging.getLogger(__name__)
+
+# Threads serves a stripped page without any post data to unknown browsers (checked: the Chrome-style headers
+# used for media downloads get ~270 KB and no post; these get the full page). zstd is left out because httpx
+# can't decode it.
+PAGE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:156.0) Gecko/20100101 Firefox/156.0",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Accept-Encoding": "gzip, deflate",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+}
 
 SCRIPT_PATTERN = re.compile(r"<script[^>]*data-sjs[^>]*>(.*?)</script>", re.DOTALL)
 
@@ -59,44 +71,70 @@ def PostMedia(post: dict) -> list[RemoteMedia]:
     return media
 
 
-def ParseThreadsPage(url: str, html: str) -> RemotePost:
-    code = urlsplit(url).path.rstrip("/").split("/")[-1]
-    blobs = ExtractJsonBlobs(html)
-    target = None
-    parts: list[dict] = []
+def SameAuthorPostsInThreadItems(blobs: list, code: str) -> list[dict]:
+    """Older page layout: a thread_items list containing the post lists the author's parts."""
     for blob in blobs:
         for node in Walk(blob):
             items = node.get("thread_items")
             if isinstance(items, list):
                 posts = [i["post"] for i in items if isinstance(i, dict) and isinstance(i.get("post"), dict)]
-                if any(p.get("code") == code for p in posts):
-                    target = next(p for p in posts if p.get("code") == code)
-                    username = target["user"].get("username")
-                    parts = [p for p in posts if p.get("user", {}).get("username") == username]
-                    break
-        if target:
-            break
-    if target is None:
-        for blob in blobs:
-            for node in Walk(blob):
-                if IsPost(node) and node.get("code") == code:
-                    target, parts = node, [node]
-                    break
-            if target:
-                break
-    if target is None:
+                target = next((p for p in posts if p.get("code") == code), None)
+                if target:
+                    username = (target.get("user") or {}).get("username")
+                    return [p for p in posts if (p.get("user") or {}).get("username") == username]
+    return []
+
+
+def SelfThreadNodes(post: dict) -> list[dict]:
+    """The author's later parts, from text_post_app_info.self_thread, in the page's own order (post_ids)."""
+    info = post.get("text_post_app_info") or {}
+    thread = info.get("self_thread") or {}
+    nodes = [edge["node"] for edge in (thread.get("posts") or {}).get("edges") or [] if isinstance(edge, dict) and isinstance(edge.get("node"), dict)]
+    order = [
+        (edge.get("node") or {}).get("pk")
+        for edge in (thread.get("post_ids") or {}).get("edges") or []
+        if isinstance(edge, dict)
+    ]
+    if order:
+        nodes.sort(key=lambda node: order.index(node.get("pk")) if node.get("pk") in order else len(order))
+    return nodes
+
+
+def AuthorLabel(user: dict) -> str:
+    username, fullName = user.get("username") or "", user.get("full_name") or ""
+    if fullName and username:
+        return f"{fullName} (@{username})"
+    return f"@{username}" if username else fullName
+
+
+def ParseThreadsPage(url: str, html: str) -> RemotePost:
+    code = urlsplit(url).path.rstrip("/").split("/")[-1]
+    blobs = ExtractJsonBlobs(html)
+    copies = [node for blob in blobs for node in Walk(blob) if node.get("code") == code and isinstance(node.get("user"), dict)]
+    parts = SameAuthorPostsInThreadItems(blobs, code)
+    if not parts and copies:
+        parts = [copies[0]]
+    if not parts:
         raise DownloadError("Could not read this Threads post (it may need a login, or Threads changed its page).")
-    username = target["user"].get("username", "")
-    texts = [(p.get("caption") or {}).get("text") or "" for p in parts]
+    known = {part.get("code") for part in parts}
+    postId = parts[0].get("id")
+    # The rest of the thread hangs off a partial copy of the post ({id, text_post_app_info}, no code), so match on id.
+    owners = [node for blob in blobs for node in Walk(blob) if postId and node.get("id") == postId]
+    for owner in owners:
+        for node in SelfThreadNodes(owner):
+            if node.get("code") not in known and (node.get("user") or {}).get("username") == parts[0]["user"].get("username"):
+                parts.append(node)
+                known.add(node.get("code"))
+    texts = [(part.get("caption") or {}).get("text") or "" for part in parts]
     media: list[RemoteMedia] = []
     for part in parts:
         media += PostMedia(part)
-    return RemotePost("threads", url, f"@{username}" if username else "", "\n\n".join(t for t in texts if t), media)
+    return RemotePost("threads", url, AuthorLabel(parts[0]["user"]), "\n\n".join(t for t in texts if t), media)
 
 
 class ThreadsDownloader:
     def __init__(self, client: httpx.Client | None = None):
-        self.client = client or httpx.Client(headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"}, follow_redirects=True, timeout=30)
+        self.client = client or httpx.Client(headers=PAGE_HEADERS, follow_redirects=True, timeout=30)
 
     def Fetch(self, url: str) -> RemotePost:
         try:

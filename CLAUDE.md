@@ -43,7 +43,13 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
   password login; Facebook/Threads never had it).
 - Videos are sent with width/height/duration from `videoinfo.py`; without them Telegram guesses the shape
   and shows landscape videos wrongly. Rotation matrix is honored. Fixtures in `tests/data` made with ffmpeg.
-- gallery-dl and yt-dlp do NOT support Threads, hence the custom reader (fragile, anonymous only).
+- gallery-dl and yt-dlp do NOT support Threads, hence the custom reader (fragile, anonymous only). Threads and
+  Facebook both return a stripped page (no post data) to Chrome-style/unknown headers: use the Firefox-style
+  `PAGE_HEADERS` (no zstd, httpx can't decode it). Threads thread parts live under
+  `text_post_app_info.self_thread.posts.edges[].node` of a PARTIAL copy of the post (`{id, text_post_app_info}`,
+  matched by `id`), ordered by `self_thread.post_ids`.
+- Facebook: gallery-dl (media) + `facebook.py` page reader (sharer's own author/text; gallery-dl follows shares
+  to the original and has no option for this).
 - Strangers get `store.DeniedText()` ("Please ask my owner @x ...") everywhere; owner = user with
   `owner: true` (initial user), else first user. Usernames are refreshed on contact.
 - Groups only work reliably with BotFather privacy mode DISABLED (+ re-add the bot); logged at startup via
@@ -65,7 +71,8 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
 Tests use mocks/fixtures. Checked against real Telegram with a FAKE token only: invalid token exits fatally, two
 run_polling calls in one process work. Owner notifications, /restart, /shutdown and crash/restart are NOT verified live (re-exec itself was checked
 with a probe script, as script and as `-m`). Verified live by the owner: Instagram (sessionid) and Twitter (auth_token) downloads.
-NOT verified: Facebook, Threads, and the video aspect-ratio fix in real Telegram. The MP4 reader was checked
+Verified live by the agent (read-only, anonymous): Facebook share post and a Threads 8-part text thread.
+NOT verified: Threads posts with images/video, Facebook video posts, the video aspect-ratio fix in real Telegram. The MP4 reader was checked
 against ffprobe on generated files.
 
 ## Not yet
