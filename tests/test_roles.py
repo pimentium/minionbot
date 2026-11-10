@@ -31,6 +31,7 @@ ROLE_IDS = {"unknown": STRANGER_ID, "user": USER_ID, "admin": ADMIN_ID, "owner":
 # command text -> lowest role allowed to run it (the spec)
 MATRIX = {
     "/whoami": "unknown",
+    "/social https://x.com/a/status/1": "user",
     "/start": "user",
     "/help": "user",
     "/users list": "admin",
@@ -56,7 +57,7 @@ def test_command_access_matrix(registry, team, command, role):
 def test_commands_registered_with_the_specified_minimum_roles(registry):
     minimum = {name: c.minRole for name, c in registry.commands.items()}
     assert minimum == {
-        "whoami": Role.UNKNOWN, "start": Role.USER, "help": Role.USER,
+        "whoami": Role.UNKNOWN, "start": Role.USER, "help": Role.USER, "social": Role.USER,
         "users": Role.ADMIN, "restart": Role.OWNER, "shutdown": Role.OWNER,
     }
     assert SOCIAL_LINKS_MIN_ROLE == Role.USER
@@ -91,9 +92,9 @@ def test_whoami_for_unknown_keeps_the_original_format(registry, team):
 @pytest.mark.parametrize(
     "role,permissions",
     [
-        ("user", "/start, /help, /whoami, social network links"),
-        ("admin", "/start, /help, /whoami, /users, social network links"),
-        ("owner", "/start, /help, /whoami, /users, /restart, /shutdown, social network links"),
+        ("user", "/start, /help, /whoami, /social, social network links"),
+        ("admin", "/start, /help, /whoami, /social, /users, social network links"),
+        ("owner", "/start, /help, /whoami, /social, /users, /restart, /shutdown, social network links"),
     ],
 )
 def test_whoami_shows_role_and_permissions(registry, team, role, permissions):

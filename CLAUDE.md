@@ -38,6 +38,10 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
 - Unknown users: "Access denied." for everything but `/whoami`. Private chats only.
 - Config precedence: CLI args (`--token`, `--initial-user`, `--users-file`) > env/.env > defaults.
 - httpx logging is lowered to WARNING because its URLs contain the bot token.
+- Commands that need async chat I/O (`/social`, later `/url`, `/google`) are flagged `needsChat=True` and are
+  implemented in `bot.py` (`MakeSocialCommandCallback` etc.); their sync handler is only a usage fallback.
+  They use `registry.Authorize` for the role check and `inGroups=True` makes them work in groups too.
+  `/social` and the implicit link handler share `ProcessLinks`.
 - New commands: write `Handler(context) -> str`, register in `BuildRegistry` with help lines and `minRole`.
 
 - Link cleaning (`links.py`) is an ALLOWLIST: keep the path (or for old Facebook forms only v / fbid /

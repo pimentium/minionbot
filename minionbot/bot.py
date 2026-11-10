@@ -11,11 +11,13 @@ from telegram.constants import ChatAction, ChatType
 from telegram.error import Conflict, NetworkError
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
+from minionbot.builtin import SOCIAL_USAGE
 from minionbot.commands import UNKNOWN_COMMAND_TEXT, CommandRegistry
 from minionbot.config import Config
 from minionbot.control import BotControl
 from minionbot.notify import Notifier
 from minionbot.social.format import BuildTexts
+from minionbot.social.links import FindLinks
 from minionbot.social.models import PHOTO, DownloadError, LocalMedia, Post, UnexpectedDownloadError
 from minionbot.social.service import SocialService
 from minionbot.social.triggers import IGNORE, NO_LINKS, Decide, Incoming
@@ -128,6 +130,46 @@ async def ReplyWithPost(message: Message, post: Post) -> None:
         await message.reply_text(text, link_preview_options=NO_PREVIEW)
 
 
+async def ProcessLinks(message: Message, chat, links: list, service: SocialService, notifier: Notifier | None) -> None:
+    """Download each social link and reply with it, one reply per link (shared by the implicit handler and /social)."""
+    for link in links:
+        await chat.send_action(ChatAction.UPLOAD_DOCUMENT)
+        with tempfile.TemporaryDirectory(prefix="minionbot-") as directory:
+            try:
+                post = await service.Load(link, Path(directory))
+                await ReplyWithPost(message, post)
+            except DownloadError as error:
+                await message.reply_text(f"{error}\n{link.url}", link_preview_options=NO_PREVIEW)
+                if isinstance(error, UnexpectedDownloadError) and notifier:
+                    await notifier.ReportFailure(f"downloading a {link.network} link", error.__cause__ or error)
+            except Exception as error:
+                LOGGER.exception("Failed to reply for %s", link.url)
+                await message.reply_text(f"Sorry, I couldn't send the result for {link.url}", link_preview_options=NO_PREVIEW)
+                if notifier:
+                    await notifier.ReportFailure(f"sending the result of a {link.network} link", error)
+
+
+def MakeSocialCommandCallback(registry: CommandRegistry, store: UserStore, service: SocialService, notifier: Notifier | None = None):
+    """/social <link...>: the explicit version of the implicit link handling."""
+
+    async def Callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message, sender, chat = update.effective_message, update.effective_user, update.effective_chat
+        if message is None or sender is None or chat is None:
+            return
+        _, denial = registry.Authorize("social", sender.id, sender.username, store)
+        if denial is not None:
+            await message.reply_text(denial)
+            return
+        incoming = ToIncoming(message)
+        links = FindLinks(incoming.text, incoming.urls)
+        if not links:
+            await message.reply_text(SOCIAL_USAGE)
+            return
+        await ProcessLinks(message, chat, links, service, notifier)
+
+    return Callback
+
+
 def MakeMessageCallback(store: UserStore, service: SocialService, notifier: Notifier | None = None):
     async def Callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message, sender, chat = update.effective_message, update.effective_user, update.effective_chat
@@ -159,21 +201,7 @@ def MakeMessageCallback(store: UserStore, service: SocialService, notifier: Noti
             )
             await message.reply_text(PRIVACY_HINT_TEXT if lostReply else NO_LINKS_TEXT if decision.mentioned else UNKNOWN_COMMAND_TEXT)
             return
-        for link in decision.links:
-            await chat.send_action(ChatAction.UPLOAD_DOCUMENT)
-            with tempfile.TemporaryDirectory(prefix="minionbot-") as directory:
-                try:
-                    post = await service.Load(link, Path(directory))
-                    await ReplyWithPost(message, post)
-                except DownloadError as error:
-                    await message.reply_text(f"{error}\n{link.url}", link_preview_options=NO_PREVIEW)
-                    if isinstance(error, UnexpectedDownloadError) and notifier:
-                        await notifier.ReportFailure(f"downloading a {link.network} link", error.__cause__ or error)
-                except Exception as error:
-                    LOGGER.exception("Failed to reply for %s", link.url)
-                    await message.reply_text(f"Sorry, I couldn't send the result for {link.url}", link_preview_options=NO_PREVIEW)
-                    if notifier:
-                        await notifier.ReportFailure(f"sending the result of a {link.network} link", error)
+        await ProcessLinks(message, chat, decision.links, service, notifier)
 
     return Callback
 
@@ -241,9 +269,12 @@ def BuildApplication(
     application.post_init = MakePostInit(notifier, restartInfo)
     application.post_shutdown = MakePostShutdown(service)
     application.add_error_handler(MakeErrorHandler(notifier))
-    # Commands work in private chats only (they expose the user list).
-    for name in registry.Names():
-        application.add_handler(CommandHandler(name, MakeCommandCallback(registry, store, name, notifier, control), filters=PRIVATE))
+    # Commands that need chat I/O are implemented here; the rest run through registry.Dispatch.
+    chatCommands = {"social": MakeSocialCommandCallback(registry, store, service, notifier)}
+    for name, command in registry.commands.items():
+        callback = chatCommands[name] if command.needsChat else MakeCommandCallback(registry, store, name, notifier, control)
+        # Most commands expose bot internals (user list, restart), so they are private-chat only.
+        application.add_handler(CommandHandler(name, callback, filters=filters.ALL if command.inGroups else PRIVATE))
     # Everything else: social links, mentions, strangers, unknown commands.
     application.add_handler(MessageHandler(filters.ALL, MakeMessageCallback(store, service, notifier)))
     return application

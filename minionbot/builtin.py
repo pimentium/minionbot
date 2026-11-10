@@ -94,6 +94,14 @@ def UsersRemove(context: CommandContext, args: list[str]) -> str:
     return f"Removed {user.name}."
 
 
+SOCIAL_USAGE = "Usage: /social <link to a post on Instagram, Facebook, Twitter/X or Threads>"
+
+
+def SocialCommand(context: CommandContext) -> str:
+    """Placeholder: /social needs chat I/O, so the Telegram adapter runs it (see bot.py)."""
+    return SOCIAL_USAGE
+
+
 def RequestControl(context: CommandContext, action: str, text: str) -> str:
     if context.control is None:
         raise UserError("This command is not available here.")
@@ -115,6 +123,16 @@ def BuildRegistry() -> CommandRegistry:
     registry.Register(Command("start", HelpCommand, minRole=Role.USER))
     registry.Register(Command("help", HelpCommand, help=(("/help", "show commands available to you"),), minRole=Role.USER))
     registry.Register(Command("whoami", WhoamiCommand, help=(("/whoami", "show your Telegram ID, role and permissions"),), minRole=Role.UNKNOWN))
+    registry.Register(
+        Command(
+            "social",
+            SocialCommand,
+            help=(("/social <link>", "download a post from Instagram, Facebook, Twitter/X or Threads"),),
+            minRole=Role.USER,
+            inGroups=True,
+            needsChat=True,
+        )
+    )
     registry.Register(
         Command(
             "users",

@@ -34,12 +34,17 @@ class Command:
 
     minRole: the lowest role allowed to run it (roles include everything below them).
     help: (syntax, description) lines shown by /help; empty = hidden.
+    inGroups: also available in group chats (default: private chats only).
+    needsChat: implemented in the Telegram adapter because it needs async chat I/O (downloads, uploads);
+        the sync handler is then only a usage fallback.
     """
 
     name: str
     handler: CommandFunction
     help: tuple[tuple[str, str], ...] = ()
     minRole: Role = Role.USER
+    inGroups: bool = False
+    needsChat: bool = False
 
 
 class CommandRegistry:
@@ -71,6 +76,18 @@ class CommandRegistry:
             names.append("social network links")
         return names
 
+    def Authorize(self, name: str, telegramId: int, username: str | None, store: UserStore) -> tuple[User | None, str | None]:
+        """Who is asking and, if they may not run /name, the text to answer with."""
+        user = store.Authenticate(telegramId, username)
+        command = self.commands.get(name)
+        if command is None:
+            return user, store.DeniedText() if user is None else UNKNOWN_COMMAND_TEXT
+        if user is None and command.minRole > Role.UNKNOWN:
+            return user, store.DeniedText()
+        if not self.CanRun(command, user):
+            return user, f"You don't have permission to use /{name} (it needs the {command.minRole.label} role)."
+        return user, None
+
     def Dispatch(
         self,
         name: str,
@@ -81,14 +98,10 @@ class CommandRegistry:
         onError: Callable[[Exception], None] | None = None,
         control: object | None = None,
     ) -> str:
-        user = store.Authenticate(telegramId, username)
-        command = self.commands.get(name)
-        if command is None:
-            return store.DeniedText() if user is None else UNKNOWN_COMMAND_TEXT
-        if user is None and command.minRole > Role.UNKNOWN:
-            return store.DeniedText()
-        if not self.CanRun(command, user):
-            return f"You don't have permission to use /{name} (it needs the {command.minRole.label} role)."
+        user, denial = self.Authorize(name, telegramId, username, store)
+        if denial is not None:
+            return denial
+        command = self.commands[name]
         context = CommandContext(store, self, telegramId, username, user, args, control)
         try:
             return command.handler(context)

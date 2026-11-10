@@ -34,13 +34,14 @@ All config can also be set via environment variables, so Docker works with `--en
 |---|---|---|
 | `/whoami` | unknown | show your Telegram ID and username; users also see their role and permissions |
 | `/start`, `/help` | user | list the commands available to your role |
+| `/social <link>` | user | download a post from Instagram, Facebook, Twitter/X or Threads; same result as sending the bare link; also works in groups |
 | `/users list` | admin | list users with their roles |
 | `/users add <id\|@username> [user\|admin] [name]` | admin | add a user (role defaults to `user`) |
 | `/users update <id\|@username\|name> <user\|admin>` | admin | change a user's role (the role is required) |
 | `/users remove <id\|@username\|name>` | admin | remove a user (not yourself, never the owner) |
 | `/restart` | owner | restart the bot process (picks up code and `.env` changes) |
 | `/shutdown` | owner | stop the bot |
-| social network links | user | download the post (see below) |
+| social network links (no command) | user | sending or mentioning a link downloads the post (see below) |
 
 ## Roles
 
