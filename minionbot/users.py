@@ -7,19 +7,42 @@ import os
 import re
 import tempfile
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from enum import IntEnum
 from pathlib import Path
-
-ALL_PERMISSIONS = "*"
-ADMIN_PERMISSION = "admin"
 
 USERNAME_PATTERN = re.compile(r"^@?([A-Za-z][A-Za-z0-9_]{4,31})$")
 NAME_PATTERN = re.compile(r"^[\w.-]{1,32}$")
-PERMISSION_PATTERN = re.compile(r"^(\*|[a-z][a-z0-9_-]{0,31})$")
 
 
 class UserError(Exception):
     """A user-facing problem (bad input, duplicate, unreadable store)."""
+
+
+class Role(IntEnum):
+    """Each role includes everything the previous ones may do (compare with >=)."""
+
+    UNKNOWN = 0  # anyone not in the user list
+    USER = 1
+    ADMIN = 2
+    OWNER = 3  # only the user given at bot start
+
+    @property
+    def label(self) -> str:
+        return self.name.lower()
+
+
+# Roles an admin may hand out. UNKNOWN means "not a user" (use /users remove); OWNER is fixed at bot start.
+ASSIGNABLE_ROLES = (Role.USER, Role.ADMIN)
+# Handling of social network links needs at least this role.
+SOCIAL_LINKS_MIN_ROLE = Role.USER
+
+
+def ParseRole(text: str) -> Role:
+    for role in Role:
+        if role.label == text.strip().lower():
+            return role
+    raise UserError(f"Unknown role '{text}'. Roles: {', '.join(r.label for r in ASSIGNABLE_ROLES)}.")
 
 
 @dataclass(frozen=True)
@@ -46,30 +69,22 @@ class User:
     name: str
     telegramId: int | None = None
     username: str | None = None
-    permissions: list[str] = field(default_factory=lambda: [ALL_PERMISSIONS])
-    owner: bool = False
-
-    def HasPermission(self, permission: str) -> bool:
-        return ALL_PERMISSIONS in self.permissions or permission in self.permissions
+    role: Role = Role.USER
 
     def ToDict(self) -> dict:
-        return {
-            "name": self.name,
-            "telegramId": self.telegramId,
-            "username": self.username,
-            "permissions": list(self.permissions),
-            "owner": self.owner,
-        }
+        return {"name": self.name, "telegramId": self.telegramId, "username": self.username, "role": self.role.label}
 
     @staticmethod
     def FromDict(data: dict) -> User:
-        return User(
-            name=data["name"],
-            telegramId=data.get("telegramId"),
-            username=data.get("username"),
-            permissions=list(data.get("permissions") or [ALL_PERMISSIONS]),
-            owner=bool(data.get("owner", False)),
-        )
+        if data.get("role"):
+            role = ParseRole(data["role"])
+        elif data.get("owner"):  # file written before roles existed
+            role = Role.OWNER
+        elif "admin" in (data.get("permissions") or []):  # an explicit admin permission; "*" was only the default
+            role = Role.ADMIN
+        else:
+            role = Role.USER  # never gain privileges in a migration
+        return User(name=data["name"], telegramId=data.get("telegramId"), username=data.get("username"), role=role)
 
     def Describe(self) -> str:
         ident = []
@@ -79,7 +94,7 @@ class User:
             ident.append("id not linked yet")
         if self.username:
             ident.append(f"@{self.username}")
-        return f"{self.name} ({', '.join(ident)}) [{', '.join(self.permissions)}]"
+        return f"{self.name} ({', '.join(ident)}) [{self.role.label}]"
 
 
 class UserStore:
@@ -99,8 +114,6 @@ class UserStore:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             self.users = [User.FromDict(item) for item in data["users"]]
-            if self.users and not any(user.owner for user in self.users):
-                self.users[0].owner = True  # files written before owners existed: the first user is the owner
         except (OSError, ValueError, KeyError, TypeError) as error:
             # Refuse to continue: silently starting empty would overwrite the file.
             raise UserError(f"Cannot read users file {self.path}: {error}") from error
@@ -167,12 +180,9 @@ class UserStore:
             self._Save()
 
     def GetOwner(self) -> User | None:
-        """The owner: the user flagged as such, else the first user."""
+        """The owner: the user with the owner role (set at bot start by EnsureInitialUser)."""
         with self.lock:
-            for user in self.users:
-                if user.owner:
-                    return user
-            return self.users[0] if self.users else None
+            return next((user for user in self.users if user.role == Role.OWNER), None)
 
     def DeniedText(self) -> str:
         owner = self.GetOwner()
@@ -184,24 +194,42 @@ class UserStore:
 
     # ---- mutations ---------------------------------------------------
 
-    def Add(self, ref: UserRef, name: str | None = None, permissions: list[str] | None = None) -> User:
+    def _Create(self, ref: UserRef, name: str | None, role: Role) -> User:
+        name = name or ref.username or str(ref.telegramId)
+        if not NAME_PATTERN.match(name):
+            raise UserError("Name must be 1-32 chars: letters, digits, '_', '.', '-'.")
+        for existing in self.users:
+            if ref.telegramId is not None and existing.telegramId == ref.telegramId:
+                raise UserError(f"User with ID {ref.telegramId} already exists ({existing.name}).")
+            if ref.username is not None and existing.username == ref.username:
+                raise UserError(f"User @{ref.username} already exists ({existing.name}).")
+            if existing.name.lower() == name.lower():
+                raise UserError(f"Name '{name}' is already taken.")
+        user = User(name=name, telegramId=ref.telegramId, username=ref.username, role=role)
+        self.users.append(user)
+        self._Save()
+        return user
+
+    @staticmethod
+    def _CheckAssignable(role: Role) -> None:
+        if role == Role.OWNER:
+            raise UserError("The owner role belongs to the user given at bot start and cannot be assigned.")
+        if role not in ASSIGNABLE_ROLES:
+            raise UserError(f"Role must be one of: {', '.join(r.label for r in ASSIGNABLE_ROLES)}.")
+
+    def Add(self, ref: UserRef, name: str | None = None, role: Role = Role.USER) -> User:
         with self.lock:
-            name = name or ref.username or str(ref.telegramId)
-            if not NAME_PATTERN.match(name):
-                raise UserError("Name must be 1-32 chars: letters, digits, '_', '.', '-'.")
-            permissions = permissions or [ALL_PERMISSIONS]
-            for permission in permissions:
-                if not PERMISSION_PATTERN.match(permission):
-                    raise UserError(f"Invalid permission '{permission}'.")
-            for existing in self.users:
-                if ref.telegramId is not None and existing.telegramId == ref.telegramId:
-                    raise UserError(f"User with ID {ref.telegramId} already exists ({existing.name}).")
-                if ref.username is not None and existing.username == ref.username:
-                    raise UserError(f"User @{ref.username} already exists ({existing.name}).")
-                if existing.name.lower() == name.lower():
-                    raise UserError(f"Name '{name}' is already taken.")
-            user = User(name=name, telegramId=ref.telegramId, username=ref.username, permissions=permissions)
-            self.users.append(user)
+            self._CheckAssignable(role)
+            return self._Create(ref, name, role)
+
+    def UpdateRole(self, user: User, role: Role) -> User:
+        with self.lock:
+            if user not in self.users:
+                raise UserError("No such user.")
+            if user.role == Role.OWNER:
+                raise UserError("The owner's role cannot be changed.")
+            self._CheckAssignable(role)
+            user.role = role
             self._Save()
             return user
 
@@ -209,24 +237,37 @@ class UserStore:
         with self.lock:
             if user not in self.users:
                 raise UserError("No such user.")
-            if len(self.users) == 1:
-                raise UserError("Cannot remove the last user.")
+            if user.role == Role.OWNER:
+                raise UserError("The owner cannot be removed.")
             self.users.remove(user)
             self._Save()
 
     def EnsureInitialUser(self, reference: str) -> User:
-        """Create the owner on start if no matching user exists yet."""
+        """Make the user given at bot start the one and only owner, creating them if needed.
+
+        Anyone else who held the owner role (e.g. the start user changed) becomes an admin.
+        """
         with self.lock:
             ref = ParseUserRef(reference)
+            target = next(
+                (
+                    user
+                    for user in self.users
+                    if (ref.telegramId is not None and user.telegramId == ref.telegramId)
+                    or (ref.username is not None and user.username == ref.username)
+                ),
+                None,
+            )
+            if target is None:
+                name = "owner"
+                while any(u.name.lower() == name for u in self.users):
+                    name += "_"
+                target = self._Create(ref, name, Role.OWNER)
+            changed = target.role != Role.OWNER
+            target.role = Role.OWNER
             for user in self.users:
-                if (ref.telegramId is not None and user.telegramId == ref.telegramId) or (
-                    ref.username is not None and user.username == ref.username
-                ):
-                    return user
-            name = "owner"
-            while any(u.name.lower() == name for u in self.users):
-                name += "_"
-            created = self.Add(ref, name=name, permissions=[ALL_PERMISSIONS])
-            created.owner = True
-            self._Save()
-            return created
+                if user is not target and user.role == Role.OWNER:
+                    user.role, changed = Role.ADMIN, True
+            if changed:
+                self._Save()
+            return target

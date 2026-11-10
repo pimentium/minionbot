@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import Callable
 
-from minionbot.users import User, UserError, UserStore
+from minionbot.users import SOCIAL_LINKS_MIN_ROLE, Role, User, UserError, UserStore
 
 LOGGER = logging.getLogger(__name__)
 
@@ -32,18 +32,14 @@ CommandFunction = Callable[[CommandContext], str]
 class Command:
     """A bot command.
 
-    permission: required user permission (None = any configured user).
-    public: callable even by unknown users (only for harmless commands).
-    ownerOnly: only the owner may run it, regardless of permissions.
+    minRole: the lowest role allowed to run it (roles include everything below them).
     help: (syntax, description) lines shown by /help; empty = hidden.
     """
 
     name: str
     handler: CommandFunction
     help: tuple[tuple[str, str], ...] = ()
-    permission: str | None = None
-    public: bool = False
-    ownerOnly: bool = False  # only the owner, whatever permissions others have (e.g. "*")
+    minRole: Role = Role.USER
 
 
 class CommandRegistry:
@@ -58,17 +54,22 @@ class CommandRegistry:
     def Names(self) -> list[str]:
         return list(self.commands)
 
+    @staticmethod
+    def RoleOf(user: User | None) -> Role:
+        return user.role if user else Role.UNKNOWN
+
     def CanRun(self, command: Command, user: User | None) -> bool:
-        if command.public:
-            return True
-        if user is None:
-            return False
-        if command.ownerOnly and not user.owner:
-            return False
-        return command.permission is None or user.HasPermission(command.permission)
+        return self.RoleOf(user) >= command.minRole
 
     def Available(self, user: User | None) -> list[Command]:
         return [c for c in self.commands.values() if self.CanRun(c, user)]
+
+    def Permissions(self, role: Role) -> list[str]:
+        """Everything a role may use: its commands, then the social link feature."""
+        names = [f"/{c.name}" for c in self.commands.values() if role >= c.minRole]
+        if role >= SOCIAL_LINKS_MIN_ROLE:
+            names.append("social network links")
+        return names
 
     def Dispatch(
         self,
@@ -84,10 +85,10 @@ class CommandRegistry:
         command = self.commands.get(name)
         if command is None:
             return store.DeniedText() if user is None else UNKNOWN_COMMAND_TEXT
-        if not command.public and user is None:
+        if user is None and command.minRole > Role.UNKNOWN:
             return store.DeniedText()
         if not self.CanRun(command, user):
-            return f"You don't have permission to use /{name}."
+            return f"You don't have permission to use /{name} (it needs the {command.minRole.label} role)."
         context = CommandContext(store, self, telegramId, username, user, args, control)
         try:
             return command.handler(context)

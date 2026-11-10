@@ -15,7 +15,7 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
 
 ## Layout
 - `minionbot/users.py`: User model + JSON `UserStore` (atomic writes, 0600).
-- `minionbot/commands.py`: transport-independent `CommandRegistry.Dispatch` (auth + permissions + errors).
+- `minionbot/commands.py`: transport-independent `CommandRegistry.Dispatch` (auth + role check + errors).
 - `minionbot/builtin.py`: /start /help /whoami /users; `BuildRegistry()` is where new commands go.
 - `minionbot/bot.py`: thin telegram adapter. `main.py` (repo root) and `python -m minionbot.main`: entry points.
 
@@ -28,13 +28,17 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
 
 ## Decisions
 - Users identified by numeric ID or @username; username entries bind to the ID on first contact.
-- Admin = `admin` permission flag (no secret typed in chat). Default permission `*` = all commands,
-  so currently every user is effectively admin (requested). Restrict via `perms=`.
+- Roles replace permissions: `Role` IntEnum UNKNOWN < USER < ADMIN < OWNER (in `users.py`), each includes the
+  lower ones. A `Command` has `minRole`; social link handling needs `SOCIAL_LINKS_MIN_ROLE` (USER). OWNER is
+  assigned only by `UserStore.EnsureInitialUser` (the --initial-user at start; the previous owner becomes
+  admin) and can't be assigned/changed/removed by commands. Nobody can change their own role. `/whoami` for
+  UNKNOWN keeps the short original format. Old files migrate without gaining privileges (owner flag -> owner,
+  explicit "admin" permission -> admin, else user). `perms=` and permission strings no longer exist.
 - Storage: JSON file (chosen over SQLite by owner). Corrupt file => refuse to start, never overwrite.
 - Unknown users: "Access denied." for everything but `/whoami`. Private chats only.
 - Config precedence: CLI args (`--token`, `--initial-user`, `--users-file`) > env/.env > defaults.
 - httpx logging is lowered to WARNING because its URLs contain the bot token.
-- New commands: write `Handler(context) -> str`, register in `BuildRegistry` with help lines/permission.
+- New commands: write `Handler(context) -> str`, register in `BuildRegistry` with help lines and `minRole`.
 
 - Link cleaning (`links.py`) is an ALLOWLIST: keep the path (or for old Facebook forms only v / fbid /
   story_fbid+id), drop every other parameter and fragment; never switch to a blocklist of tracking params.
@@ -52,8 +56,8 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
   matched by `id`), ordered by `self_thread.post_ids`.
 - Facebook: gallery-dl (media) + `facebook.py` page reader (sharer's own author/text; gallery-dl follows shares
   to the original and has no option for this).
-- Strangers get `store.DeniedText()` ("Please ask my owner @x ...") everywhere; owner = user with
-  `owner: true` (initial user), else first user. Usernames are refreshed on contact.
+- Strangers get `store.DeniedText()` ("Please ask my owner @x ...") everywhere; owner = user with the owner
+  role (the initial user). Usernames are refreshed on contact.
 - Groups only work reliably with BotFather privacy mode DISABLED (+ re-add the bot); logged at startup via
   `can_read_all_group_messages`. Do not claim @mentions are delivered under privacy mode (unverified).
 - Group handling: react only to @mention (+ replies to a message when the reply mentions the bot).
@@ -65,7 +69,7 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
   restarts are left to Docker/systemd.
 - `/restart` = clean stop + `os.execve` of `sys.orig_argv` with the pre-`.env` environment (same pid, reloads
   code/.env; reason passed via internal `MINIONBOT_RESTART_REASON`). `/shutdown` = clean stop, exit 0. Both are
-  `ownerOnly` commands (owner flag, not permissions: all users have `*`). Docker/systemd must use
+  `minRole=Role.OWNER` commands. Docker/systemd must use
   restart-on-failure, not always/unless-stopped. `minionbot/control.py` is the command -> main signal.
 - PTB prints the bot token in some exceptions: `RedactSecrets` installs a log filter; keep it.
 

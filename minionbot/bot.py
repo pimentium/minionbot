@@ -19,7 +19,7 @@ from minionbot.social.format import BuildTexts
 from minionbot.social.models import PHOTO, DownloadError, LocalMedia, Post, UnexpectedDownloadError
 from minionbot.social.service import SocialService
 from minionbot.social.triggers import IGNORE, NO_LINKS, Decide, Incoming
-from minionbot.users import UserStore
+from minionbot.users import SOCIAL_LINKS_MIN_ROLE, UserStore
 
 LOGGER = logging.getLogger(__name__)
 
@@ -139,7 +139,8 @@ def MakeMessageCallback(store: UserStore, service: SocialService, notifier: Noti
         LOGGER.info("Message in %s chat %s from user %s: %s, %d link(s)", chat.type, chat.id, sender.id, decision.kind, len(decision.links))
         if decision.kind == IGNORE:
             return
-        if store.Authenticate(sender.id, sender.username) is None:
+        user = store.Authenticate(sender.id, sender.username)
+        if user is None or user.role < SOCIAL_LINKS_MIN_ROLE:
             await message.reply_text(store.DeniedText())
             return
         if decision.kind == NO_LINKS:

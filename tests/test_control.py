@@ -8,7 +8,7 @@ from telegram.constants import ChatType
 from minionbot import main
 from minionbot.bot import MakeCommandCallback
 from minionbot.control import RESTART, SHUTDOWN, BotControl
-from minionbot.users import UserRef
+from minionbot.users import Role, UserRef
 
 from tests.conftest import OWNER_ID
 from tests.test_bot import FakeContext, FakeMessage, FakeUpdate
@@ -27,8 +27,8 @@ def test_owner_can_restart_and_shutdown(registry, store):
     assert control.requested == SHUTDOWN
 
 
-def test_other_users_even_with_all_permissions_cannot(registry, store):
-    store.Add(UserRef(telegramId=2), name="friend")  # default permissions: "*"
+def test_even_admins_cannot_restart_or_shutdown(registry, store):
+    store.Add(UserRef(telegramId=2), name="friend", role=Role.ADMIN)
     control = BotControl()
     for command in ("/restart", "/shutdown"):
         assert "permission" in Run(registry, store, command, telegramId=2, control=control)

@@ -14,7 +14,7 @@ python3 -m venv .venv
 - `BOT_TOKEN`: create a bot with [@BotFather](https://t.me/BotFather).
 - `INITIAL_USER`: your numeric Telegram ID (or `@username`). Don't know it? Start the bot with any
   value, send `/whoami` to it from your account (works even before you have access), then fix `.env`
-  and restart. The initial user is created on start if missing and has all permissions.
+  and restart. The initial user is created on start if missing and is the bot's owner.
 - `USERS_FILE` (optional): defaults to `data/users.json`. Keep it on a volume when running in Docker.
 
 Command-line arguments override the environment / `.env`:
@@ -30,21 +30,39 @@ All config can also be set via environment variables, so Docker works with `--en
 
 ## Commands
 
-| Command | Who | What |
+| Command | Lowest role | What |
 |---|---|---|
-| `/help` | users | list the commands available to you |
-| `/whoami` | anyone | show your Telegram ID, username and access status |
-| `/users list` | `admin` | list users |
-| `/users add <id\|@username> [name] [perms=a,b]` | `admin` | add a user (default permissions: all) |
-| `/users remove <id\|@username\|name>` | `admin` | remove a user (not yourself, not the last one) |
-| `/restart` | owner only | restart the bot process (picks up code and `.env` changes) |
-| `/shutdown` | owner only | stop the bot |
+| `/whoami` | unknown | show your Telegram ID and username; users also see their role and permissions |
+| `/start`, `/help` | user | list the commands available to your role |
+| `/users list` | admin | list users with their roles |
+| `/users add <id\|@username> [user\|admin] [name]` | admin | add a user (role defaults to `user`) |
+| `/users update <id\|@username\|name> <user\|admin>` | admin | change a user's role (the role is required) |
+| `/users remove <id\|@username\|name>` | admin | remove a user (not yourself, never the owner) |
+| `/restart` | owner | restart the bot process (picks up code and `.env` changes) |
+| `/shutdown` | owner | stop the bot |
+| social network links | user | download the post (see below) |
 
-Users added by `@username` are linked to their numeric ID on first message; after that only the ID
-counts, so a re-assigned username gives no access. Prefer numeric IDs.
+## Roles
 
-Permissions: `*` means everything (the default, so for now every user can run every command);
-`/users` requires `admin`. To restrict someone later: `/users add 123 bob perms=notes`.
+`unknown < user < admin < owner`; every role may do everything the lower ones may.
+
+| Role | Who | Adds |
+|---|---|---|
+| unknown | anyone not in the user list | `/whoami` only |
+| user | added with `/users add` | `/start`, `/help`, social network links |
+| admin | promoted with `/users update` | all `/users` commands |
+| owner | **only** the user given at bot start (`--initial-user` / `INITIAL_USER`) | `/restart`, `/shutdown` |
+
+The owner role can't be assigned, changed or removed with commands. If the start user changes, the new one
+becomes the owner and the previous owner becomes an admin. Nobody can change their own role. Admins can add,
+promote, demote and remove other users, including other admins.
+
+Users added by `@username` are linked to their numeric ID on first message; after that only the ID counts,
+so a re-assigned username gives no access. Prefer numeric IDs.
+
+Users files written before roles existed are converted when the bot starts: the old owner becomes the owner,
+an explicit `admin` permission becomes the admin role, everyone else becomes `user` (nobody gains privileges;
+promote people again with `/users update`).
 
 Strangers get "Access denied." for everything except `/whoami`. The bot only answers in private chats.
 
@@ -118,7 +136,7 @@ messages.
   (the counter resets after a run that lasted a minute); the next start-up message says
   `Restarted: restart #N after: <error>`. An invalid bot token is fatal (exit code 1, no retry). Ctrl+C / SIGTERM
   stop the bot normally.
-- **/restart and /shutdown:** only the owner can use them, even though other users have all permissions.
+- **/restart and /shutdown:** only the owner role can use them.
   `/restart` stops the bot cleanly and re-executes the same command in the same process id, so new code
   and `.env` changes are picked up; the next start-up message says `Restarted: requested by the owner
   (/restart)`. `/shutdown` stops the bot and exits with code 0; it stays down until someone starts it on

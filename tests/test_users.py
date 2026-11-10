@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from minionbot.users import ALL_PERMISSIONS, ParseUserRef, UserError, UserRef, UserStore
+from minionbot.users import ASSIGNABLE_ROLES, ParseRole, ParseUserRef, Role, UserError, UserRef, UserStore
 
 
 def test_parse_user_ref():
@@ -23,14 +23,14 @@ def test_initial_user_created_once(tmp_path):
     again = store.EnsureInitialUser("42")
     assert first is again
     assert len(store.List()) == 1
-    assert first.permissions == [ALL_PERMISSIONS]
+    assert first.role == Role.OWNER
 
 
 def test_persistence_roundtrip(tmp_path):
     path = tmp_path / "sub" / "u.json"
     store = UserStore(path)
     store.EnsureInitialUser("1")
-    store.Add(UserRef(telegramId=7), name="bob", permissions=["admin"])
+    store.Add(UserRef(telegramId=7), name="bob", role=Role.ADMIN)
     reloaded = UserStore(path)
     assert [u.ToDict() for u in reloaded.List()] == [u.ToDict() for u in store.List()]
     assert (path.stat().st_mode & 0o777) == 0o600
@@ -59,7 +59,7 @@ def test_invalid_name_and_permission(store):
     with pytest.raises(UserError):
         store.Add(UserRef(telegramId=5), name="bad name")
     with pytest.raises(UserError):
-        store.Add(UserRef(telegramId=5), name="ok", permissions=["Bad Perm"])
+        store.Add(UserRef(telegramId=5), name="ok", role=Role.UNKNOWN)
 
 
 def test_authenticate_by_id(store):
@@ -96,27 +96,104 @@ def test_remove_and_last_user_protected(store):
 
 def test_file_contains_no_extra_secrets(store):
     data = json.loads(store.path.read_text())
-    assert set(data["users"][0]) == {"name", "telegramId", "username", "permissions", "owner"}
+    assert set(data["users"][0]) == {"name", "telegramId", "username", "role"}
 
 
 def test_owner_and_denied_text(tmp_path):
     store = UserStore(tmp_path / "u.json")
     owner = store.EnsureInitialUser("42")
-    assert owner.owner and store.GetOwner() is owner
+    assert owner.role == Role.OWNER and store.GetOwner() is owner
     assert store.DeniedText() == "Please ask my owner owner to allow me to help you too."
     store.Authenticate(42, "MyName")  # owner's username is learned on contact
     assert store.DeniedText() == "Please ask my owner @myname to allow me to help you too."
     assert UserStore(tmp_path / "u.json").DeniedText() == store.DeniedText()
 
 
-def test_owner_falls_back_to_first_user_for_old_files(tmp_path):
-    path = tmp_path / "u.json"
-    path.write_text(json.dumps({"users": [{"name": "boss", "telegramId": 1, "username": None, "permissions": ["*"]}]}))
-    assert UserStore(path).GetOwner().name == "boss"
+# ---- roles -------------------------------------------------------------------------------------
+
+def test_role_order_and_parsing():
+    assert Role.UNKNOWN < Role.USER < Role.ADMIN < Role.OWNER
+    assert ParseRole(" Admin ") == Role.ADMIN and ParseRole("USER") == Role.USER
+    assert ASSIGNABLE_ROLES == (Role.USER, Role.ADMIN)
+    with pytest.raises(UserError, match="Roles: user, admin"):
+        ParseRole("superman")
 
 
-def test_first_user_of_an_old_file_becomes_owner(tmp_path):
+def test_add_defaults_to_user_role(store):
+    assert store.Add(UserRef(telegramId=5)).role == Role.USER
+    assert store.Add(UserRef(telegramId=6), role=Role.ADMIN).role == Role.ADMIN
+
+
+@pytest.mark.parametrize("role", [Role.OWNER, Role.UNKNOWN])
+def test_owner_and_unknown_cannot_be_assigned(store, role):
+    with pytest.raises(UserError):
+        store.Add(UserRef(telegramId=5), role=role)
+    user = store.Add(UserRef(telegramId=6))
+    with pytest.raises(UserError):
+        store.UpdateRole(user, role)
+    assert user.role == Role.USER
+
+
+def test_update_role_persists_and_protects_owner(store):
+    user = store.Add(UserRef(telegramId=5))
+    store.UpdateRole(user, Role.ADMIN)
+    assert UserStore(store.path).Find("5").role == Role.ADMIN
+    with pytest.raises(UserError, match="owner"):
+        store.UpdateRole(store.GetOwner(), Role.USER)
+
+
+def test_owner_cannot_be_removed(store):
+    with pytest.raises(UserError, match="owner"):
+        store.Remove(store.GetOwner())
+
+
+def test_initial_user_becomes_the_only_owner(tmp_path):
+    store = UserStore(tmp_path / "u.json")
+    first = store.EnsureInitialUser("1")
+    friend = store.Add(UserRef(telegramId=2), role=Role.ADMIN)
+    second = store.EnsureInitialUser("2")  # the start user changed
+    assert second is friend and friend.role == Role.OWNER and first.role == Role.ADMIN
+    assert [u.role for u in UserStore(tmp_path / "u.json").List()].count(Role.OWNER) == 1
+
+
+def test_existing_user_is_promoted_to_owner_by_username_start_user(tmp_path):
+    store = UserStore(tmp_path / "u.json")
+    store.EnsureInitialUser("1")
+    store.Add(UserRef(username="boss12"))
+    assert store.EnsureInitialUser("@boss12").role == Role.OWNER
+    assert store.Find("1").role == Role.ADMIN
+
+
+def test_initial_user_start_is_idempotent(tmp_path):
+    store = UserStore(tmp_path / "u.json")
+    store.EnsureInitialUser("1")
+    mtime = store.path.stat().st_mtime_ns
+    store.EnsureInitialUser("1")
+    assert store.path.stat().st_mtime_ns == mtime and len(store.List()) == 1
+
+
+# ---- migration of files written before roles existed ---------------------------------------------
+
+def OldFile(tmp_path, users):
     path = tmp_path / "u.json"
-    path.write_text(json.dumps({"users": [{"name": "a", "telegramId": 1, "permissions": ["*"]}, {"name": "b", "telegramId": 2, "permissions": ["*"]}]}))
-    users = UserStore(path).List()
-    assert [u.owner for u in users] == [True, False]
+    path.write_text(json.dumps({"users": users}))
+    return path
+
+
+def test_old_file_migration_never_grants_more_than_before(tmp_path):
+    path = OldFile(tmp_path, [
+        {"name": "boss", "telegramId": 1, "permissions": ["*"], "owner": True},
+        {"name": "everything", "telegramId": 2, "permissions": ["*"]},
+        {"name": "adm", "telegramId": 3, "permissions": ["admin", "notes"]},
+        {"name": "limited", "telegramId": 4, "permissions": ["notes"]},
+    ])
+    roles = {u.name: u.role for u in UserStore(path).List()}
+    assert roles == {"boss": Role.OWNER, "everything": Role.USER, "adm": Role.ADMIN, "limited": Role.USER}
+
+
+def test_old_file_without_owner_flag_has_no_owner_until_start(tmp_path):
+    path = OldFile(tmp_path, [{"name": "a", "telegramId": 1, "permissions": ["*"]}])
+    store = UserStore(path)
+    assert store.GetOwner() is None
+    assert store.EnsureInitialUser("1").role == Role.OWNER
+    assert "permissions" not in path.read_text()  # rewritten in the new format
