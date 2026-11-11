@@ -36,6 +36,7 @@ All config can also be set via environment variables, so Docker works with `--en
 | `/start`, `/help` | user | list the commands available to your role |
 | `/social <link>` | user | download a post from Instagram, Facebook, Twitter/X or Threads; same result as sending the bare link; also works in groups |
 | `/url <link>` | user | read a web page in reader mode and send it as an Instant View article (see "Web pages"); also works in groups |
+| `/google <query>` | user | search Google: the AI overview (when Google shows one) and the top results, via SerpApi; also works in groups |
 | `/users list` | admin | list users with their roles |
 | `/users add <id\|@username> [user\|admin] [name]` | admin | add a user (role defaults to `user`) |
 | `/users update <id\|@username\|name> <user\|admin>` | admin | change a user's role (the role is required) |
@@ -90,6 +91,26 @@ replies to the bot's own messages, so an `@botname` message or an `@botname` rep
 may never arrive. Fix: in @BotFather send `/setprivacy`, pick the bot, choose **Disable**, then **remove the
 bot from the group and add it again** (or make it a group admin). At startup the bot logs whether privacy
 mode is ON or OFF, and every received message is logged (chat type, user id, decision, number of links).
+
+## Google search (`/google`)
+
+`/google <query>` replies with Google's **AI overview** (only when Google shows one for that query) followed by the
+top organic results (title as a link, domain, snippet). Google blocks scripted searches and forbids scraping, so the
+bot uses the [SerpApi](https://serpapi.com) service, which needs an API key (create one on their site):
+
+```bash
+.venv/bin/python main.py ... --serpapi-key <SERPAPI_KEY>      # or SERPAPI_KEY in the environment / .env
+```
+
+Optional: `--google-language` (default `en`) and `--google-country` (e.g. `us`; default: Google decides).
+Google shows AI overviews for English queries and a limited set of countries only, so with another language you
+will usually get just the results. Without a key `/google` answers that search is not configured.
+
+- **Privacy and cost:** every query is sent to SerpApi (and, through it, to Google). Each search counts against
+  your SerpApi plan; when Google lazy-loads the AI overview the bot makes a second request for it, which may count as
+  another search (check your plan). SerpApi caches identical searches for an hour.
+- **Problems:** a rejected key or used-up quota is reported to the user in one line and to the owner as a
+  notification; timeouts and service errors are only shown to the user.
 
 ## Web pages (`/url`)
 

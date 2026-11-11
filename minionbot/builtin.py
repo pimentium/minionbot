@@ -103,11 +103,17 @@ def SocialCommand(context: CommandContext) -> str:
 
 
 URL_USAGE = "Usage: /url <link to a web page>"
+GOOGLE_USAGE = "Usage: /google <what to search for>"
 
 
 def UrlCommand(context: CommandContext) -> str:
     """Placeholder: /url needs chat I/O, so the Telegram adapter runs it (see bot.py)."""
     return URL_USAGE
+
+
+def GoogleCommand(context: CommandContext) -> str:
+    """Placeholder: /google needs chat I/O, so the Telegram adapter runs it (see bot.py)."""
+    return GOOGLE_USAGE
 
 
 def RequestControl(context: CommandContext, action: str, text: str) -> str:
@@ -146,6 +152,16 @@ def BuildRegistry() -> CommandRegistry:
             "url",
             UrlCommand,
             help=(("/url <link>", "read a web page in reader mode (no ads or paywall clutter) as an Instant View article"),),
+            minRole=Role.USER,
+            inGroups=True,
+            needsChat=True,
+        )
+    )
+    registry.Register(
+        Command(
+            "google",
+            GoogleCommand,
+            help=(("/google <query>", "search Google: AI overview (when Google shows one) and the top results"),),
             minRole=Role.USER,
             inGroups=True,
             needsChat=True,

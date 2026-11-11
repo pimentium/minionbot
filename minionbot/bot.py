@@ -7,15 +7,18 @@ import tempfile
 from pathlib import Path
 
 from telegram import InputMediaPhoto, InputMediaVideo, LinkPreviewOptions, Message, MessageEntity, Update
-from telegram.constants import ChatAction, ChatType
+from telegram.constants import ChatAction, ChatType, ParseMode
 from telegram.error import Conflict, NetworkError
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-from minionbot.builtin import SOCIAL_USAGE, URL_USAGE
+from minionbot.builtin import GOOGLE_USAGE, SOCIAL_USAGE, URL_USAGE
 from minionbot.commands import UNKNOWN_COMMAND_TEXT, CommandRegistry
 from minionbot.config import Config
 from minionbot.control import BotControl
 from minionbot.notify import Notifier
+from minionbot.search.format import FormatResult
+from minionbot.search.models import SearchError, SearchServiceError, UnexpectedSearchError
+from minionbot.search.serpapi import MAX_QUERY_CHARS, SerpApiClient
 from minionbot.social.format import BuildTexts
 from minionbot.social.format import ChunkText
 from minionbot.social.links import FindLinks
@@ -247,6 +250,46 @@ def MakeUrlCommandCallback(registry: CommandRegistry, store: UserStore, webServi
     return Callback
 
 
+def MakeGoogleCommandCallback(registry: CommandRegistry, store: UserStore, searchClient: SerpApiClient | None, notifier: Notifier | None = None):
+    """/google <query>: AI overview (if Google shows one) and the top organic results."""
+
+    async def Callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message, sender, chat = update.effective_message, update.effective_user, update.effective_chat
+        if message is None or sender is None or chat is None:
+            return
+        _, denial = registry.Authorize("google", sender.id, sender.username, store)
+        if denial is not None:
+            await message.reply_text(denial)
+            return
+        query = " ".join(context.args or [])
+        if not query.strip():
+            await message.reply_text(GOOGLE_USAGE)
+            return
+        if len(query) > MAX_QUERY_CHARS:
+            await message.reply_text(f"That query is too long (at most {MAX_QUERY_CHARS} characters).")
+            return
+        if searchClient is None:
+            await message.reply_text("Google search is not configured (the owner needs to set a SerpApi key).")
+            return
+        await chat.send_action(ChatAction.TYPING)
+        try:
+            for text in FormatResult(await searchClient.Search(query)):
+                await message.reply_text(text, parse_mode=ParseMode.HTML, link_preview_options=NO_PREVIEW)
+        except SearchError as error:
+            await message.reply_text(str(error))
+            if isinstance(error, SearchServiceError) and notifier:
+                await notifier.ReportFailure("Google search (search service)", error)
+            elif isinstance(error, UnexpectedSearchError) and notifier:
+                await notifier.ReportFailure("Google search", error.__cause__ or error)
+        except Exception as error:
+            LOGGER.exception("Failed to answer /google")
+            await message.reply_text("Sorry, I couldn't send the search results.")
+            if notifier:
+                await notifier.ReportFailure("sending Google results", error)
+
+    return Callback
+
+
 def MakeMessageCallback(store: UserStore, service: SocialService, notifier: Notifier | None = None, webService: WebService | None = None):
     async def Callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message, sender, chat = update.effective_message, update.effective_user, update.effective_chat
@@ -323,13 +366,15 @@ def MakeErrorHandler(notifier: Notifier):
     return OnError
 
 
-def MakePostShutdown(service: SocialService, webService: WebService | None = None):
+def MakePostShutdown(service: SocialService, webService: WebService | None = None, searchClient: SerpApiClient | None = None):
     async def PostShutdown(application: Application) -> None:
         fetcher = getattr(service, "fetcher", None)
         if fetcher is not None:
             await fetcher.Close()
         if webService is not None:
             await webService.Close()
+        if searchClient is not None:
+            await searchClient.Close()
 
     return PostShutdown
 
@@ -342,18 +387,20 @@ def BuildApplication(
     restartInfo: str = "",
     control: BotControl | None = None,
     webService: WebService | None = None,
+    searchClient: SerpApiClient | None = None,
 ) -> Application:
     builder = ApplicationBuilder().token(config.botToken).concurrent_updates(True).read_timeout(30).write_timeout(UPLOAD_TIMEOUT)
     application = builder.build()
-    secrets = [config.botToken, config.telegraphToken] + [v for a in config.accounts.values() for v in (a.sessionId, a.authToken)]
+    secrets = [config.botToken, config.telegraphToken, config.serpApiKey] + [v for a in config.accounts.values() for v in (a.sessionId, a.authToken)]
     notifier = Notifier(application.bot, store, secrets)
     application.post_init = MakePostInit(notifier, restartInfo)
-    application.post_shutdown = MakePostShutdown(service, webService)
+    application.post_shutdown = MakePostShutdown(service, webService, searchClient)
     application.add_error_handler(MakeErrorHandler(notifier))
     # Commands that need chat I/O are implemented here; the rest run through registry.Dispatch.
     chatCommands = {
         "social": MakeSocialCommandCallback(registry, store, service, notifier),
         "url": MakeUrlCommandCallback(registry, store, webService, notifier),
+        "google": MakeGoogleCommandCallback(registry, store, searchClient, notifier),
     }
     for name, command in registry.commands.items():
         callback = chatCommands[name] if command.needsChat else MakeCommandCallback(registry, store, name, notifier, control)

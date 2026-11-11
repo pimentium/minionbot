@@ -23,6 +23,9 @@ class Config:
     usersFile: str
     accounts: dict[str, SocialAccount] = field(default_factory=dict)
     telegraphToken: str = ""  # optional; otherwise an account is created on first use
+    serpApiKey: str = ""  # SerpApi key for /google; without it /google says it is not configured
+    googleLanguage: str = "en"  # hl; Google shows AI overviews for English only
+    googleCountry: str = ""  # gl; empty = Google decides
 
 
 def LoadAccounts(env: Mapping[str, str], overrides: Mapping[str, SocialAccount] | None) -> dict[str, SocialAccount]:
@@ -48,6 +51,9 @@ def LoadConfig(
     usersFile: str | None = None,
     accountOverrides: Mapping[str, SocialAccount] | None = None,
     telegraphToken: str | None = None,
+    serpApiKey: str | None = None,
+    googleLanguage: str | None = None,
+    googleCountry: str | None = None,
 ) -> Config:
     """Explicit arguments (e.g. from the command line) win over environment variables."""
     env = os.environ if env is None else env
@@ -63,4 +69,7 @@ def LoadConfig(
         (usersFile or env.get("USERS_FILE", "")).strip() or DEFAULT_USERS_FILE,
         LoadAccounts(env, accountOverrides),
         (telegraphToken or env.get("TELEGRAPH_TOKEN", "")).strip(),
+        (serpApiKey or env.get("SERPAPI_KEY", "")).strip(),
+        (googleLanguage or env.get("GOOGLE_LANGUAGE", "")).strip().lower() or "en",
+        (googleCountry or env.get("GOOGLE_COUNTRY", "")).strip().lower(),
     )

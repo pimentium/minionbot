@@ -46,3 +46,13 @@ def test_twitter_auth_token_from_env():
 def test_username_password_settings_are_gone():
     env = {"BOT_TOKEN": "t", "INITIAL_USER": "1", "INSTAGRAM_USERNAME": "u", "INSTAGRAM_PASSWORD": "p"}
     assert LoadConfig(env).accounts == {}
+
+
+def test_google_settings():
+    env = {"BOT_TOKEN": "t", "INITIAL_USER": "1"}
+    config = LoadConfig(env)
+    assert (config.serpApiKey, config.googleLanguage, config.googleCountry) == ("", "en", "")
+    config = LoadConfig({**env, "SERPAPI_KEY": " envkey ", "GOOGLE_LANGUAGE": "RU", "GOOGLE_COUNTRY": "DE"})
+    assert (config.serpApiKey, config.googleLanguage, config.googleCountry) == ("envkey", "ru", "de")
+    config = LoadConfig({**env, "SERPAPI_KEY": "envkey"}, serpApiKey="clikey", googleLanguage="en", googleCountry="us")
+    assert (config.serpApiKey, config.googleLanguage, config.googleCountry) == ("clikey", "en", "us")

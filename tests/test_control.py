@@ -78,7 +78,7 @@ def PatchMain(monkeypatch, tmp_path, requested):
     monkeypatch.setattr(main, "load_dotenv", lambda: None)
     monkeypatch.setattr(main, "MediaFetcher", MagicMock())
 
-    def Build(config, store, registry, service, restartInfo, control, webService=None):
+    def Build(config, store, registry, service, restartInfo, control, webService=None, searchClient=None):
         application = MagicMock()
         application.run_polling.side_effect = lambda: setattr(control, "requested", requested)
         Build.restartInfo = restartInfo

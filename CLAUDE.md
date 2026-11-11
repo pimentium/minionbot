@@ -25,6 +25,9 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
 - `minionbot/social/`: `links.py` (URL classification), `triggers.py` (when to react / which links),
   `instagram.py` (instagrapi, sessionid cookie), `gallerydl.py` (Twitter/Facebook + Twitter thread merge), `threads.py`
   (custom page reader), `fetch.py` (media download + size limits), `videoinfo.py` (pure-Python MP4 width/height/duration), `format.py`, `service.py`, `factory.py`.
+- `minionbot/search/`: `/google`. `serpapi.py` (SerpApi client + tolerant parsing of organic_results and ai_overview;
+  second request with `engine=google_ai_overview&page_token=` when only a token is returned), `format.py` (Telegram
+  HTML, everything escaped, split on line boundaries), `models.py`.
 - `minionbot/web/`: `/url` and implicit web links. `urls.py` (find/clean non-social URLs; blocklist of tracking params),
   `safety.py` (SSRF: public IPs only, port allowlist), `fetcher.py` (manual redirects re-checked per hop, peer
   address re-checked, size/type/time limits), `reader.py` (trafilatura -> Telegraph nodes, paywall markers),
@@ -63,6 +66,10 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
   404/5xx never do. Do not add UA/crawler impersonation or challenge solving (owner chose archives only).
   SSRF protection in `web/safety.py` + `fetcher.py` is mandatory: never fetch user URLs around it. Implicit
   handling: any non-social URL in a private message / mention / mention-reply is treated like `/url`.
+- `/google`: SerpApi chosen by the owner (scraping Google is blocked and against its terms; AI overview is not in the
+  HTML scripts receive). The key is in the URL query, so httpx errors/URLs must never be logged or shown: the client
+  maps errors to its own messages and scrubs the key; key is in the redaction secrets. Key/quota errors
+  (`SearchServiceError`) notify the owner. Provider-specific code stays in `serpapi.py`.
 - Videos are sent with width/height/duration from `videoinfo.py`; without them Telegram guesses the shape
   and shows landscape videos wrongly. Rotation matrix is honored. Fixtures in `tests/data` made with ffmpeg.
 - gallery-dl and yt-dlp do NOT support Threads, hence the custom reader (fragile, anonymous only). Threads and
@@ -93,9 +100,10 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
 Tests use mocks/fixtures. Checked against real Telegram with a FAKE token only: invalid token exits fatally, two
 run_polling calls in one process work. Owner notifications, /restart, /shutdown and crash/restart are NOT verified live (re-exec itself was checked
 with a probe script, as script and as `-m`). Verified live by the owner: Instagram (sessionid) and Twitter (auth_token) downloads.
-Verified live by the agent (read-only, anonymous): /url fetch+reader on gnu.org, python.org, example.com; SSRF
+Verified live by the agent (read-only, anonymous): SerpApi error format with an invalid key (HTTP 401 + JSON error); /url fetch+reader on gnu.org, python.org, example.com; SSRF
 blocks incl. localtest.me; Wayback lookup; Facebook share post and a Threads 8-part text thread.
-NOT verified: publishing to Telegraph and Instant View in real Telegram (deliberately not published during
+NOT verified: a real /google search (no SerpApi key during development; the AI overview and page_token flows rely on
+SerpApi's documentation, the second response format is not documented), publishing to Telegraph and Instant View in real Telegram (deliberately not published during
 development), Threads posts with images/video, Facebook video posts, the video aspect-ratio fix in real Telegram. The MP4 reader was checked
 against ffprobe on generated files.
 

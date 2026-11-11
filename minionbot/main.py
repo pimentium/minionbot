@@ -22,6 +22,7 @@ from minionbot.social.fetch import MediaFetcher
 from minionbot.social.instagram import InstagramDownloader
 from minionbot.social.models import DownloadError, SocialAccount
 from minionbot.social.service import SocialService
+from minionbot.search.serpapi import SerpApiClient
 from minionbot.supervisor import RunForever
 from minionbot.web.archive import Wayback
 from minionbot.web.fetcher import PageFetcher
@@ -39,6 +40,9 @@ def ParseArgs(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.add_argument(f"--{network}-cookies", help=f"{network} cookies file, Netscape format (overrides {network.upper()}_COOKIES_FILE)")
     parser.add_argument("--twitter-auth-token", help="value of the auth_token cookie from a logged-in x.com browser session (overrides TWITTER_AUTH_TOKEN)")
     parser.add_argument("--instagram-session-id", help="value of the sessionid cookie from a logged-in instagram.com browser session (overrides INSTAGRAM_SESSION_ID)")
+    parser.add_argument("--serpapi-key", help="SerpApi API key for /google (overrides SERPAPI_KEY)")
+    parser.add_argument("--google-language", help="Google interface language, default en; AI overviews exist for English only (overrides GOOGLE_LANGUAGE)")
+    parser.add_argument("--google-country", help="Google country code, e.g. us (overrides GOOGLE_COUNTRY)")
     parser.add_argument("--telegraph-token", help="Telegraph access token for /url articles; created automatically if omitted (overrides TELEGRAPH_TOKEN)")
     return parser.parse_args(argv)
 
@@ -79,8 +83,10 @@ def Main(argv: Sequence[str] | None = None) -> None:
     startReason = os.environ.pop(RESTART_REASON_ENV, "")
     load_dotenv()
     ConfigureLogging()
-    config = LoadConfig(botToken=args.token, initialUser=args.initial_user, usersFile=args.users_file, accountOverrides=AccountOverrides(args), telegraphToken=args.telegraph_token)
-    secrets = [config.botToken, config.telegraphToken] + [v for a in config.accounts.values() for v in (a.sessionId, a.authToken)]
+    config = LoadConfig(botToken=args.token, initialUser=args.initial_user, usersFile=args.users_file, accountOverrides=AccountOverrides(args), telegraphToken=args.telegraph_token,
+        serpApiKey=args.serpapi_key, googleLanguage=args.google_language, googleCountry=args.google_country,
+    )
+    secrets = [config.botToken, config.telegraphToken, config.serpApiKey] + [v for a in config.accounts.values() for v in (a.sessionId, a.authToken)]
     RedactSecrets(secrets)
     store = UserStore(config.usersFile)
     owner = store.EnsureInitialUser(config.initialUser)
@@ -105,7 +111,8 @@ def Main(argv: Sequence[str] | None = None) -> None:
             TelegraphClient(Path(config.usersFile).parent / "telegraph.json", config.telegraphToken),
             [Wayback()],
         )
-        application = BuildApplication(config, store, BuildRegistry(), service, restartInfo, control, webService)
+        searchClient = SerpApiClient(config.serpApiKey, config.googleLanguage, config.googleCountry) if config.serpApiKey else None
+        application = BuildApplication(config, store, BuildRegistry(), service, restartInfo, control, webService, searchClient)
         asyncio.set_event_loop(asyncio.new_event_loop())
         application.run_polling()
         finalAction["requested"] = control.requested

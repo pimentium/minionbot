@@ -82,3 +82,20 @@ def test_crash_restarts_with_fresh_application_and_reason(monkeypatch, tmp_path)
     restartInfo = build.call_args_list[1][0][4]
     assert restartInfo == "restart #1 after: RuntimeError: polling died for ***"
     assert build.call_args_list[0][0][4] == ""
+
+
+def test_search_client_is_created_only_when_a_key_is_given(monkeypatch, tmp_path):
+    from minionbot.search.serpapi import SerpApiClient
+
+    for name in ("BOT_TOKEN", "INITIAL_USER", "USERS_FILE", "SERPAPI_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(main, "load_dotenv", lambda: None)
+    monkeypatch.setattr(main, "MediaFetcher", MagicMock())
+    build = MagicMock(return_value=MagicMock())
+    monkeypatch.setattr(main, "BuildApplication", build)
+    base = ["--token", "1:T", "--initial-user", "42", "--users-file", str(tmp_path / "u.json")]
+    main.Main(base)
+    assert build.call_args[0][7] is None
+    main.Main(base + ["--serpapi-key", "KEY", "--google-language", "en", "--google-country", "us"])
+    client = build.call_args[0][7]
+    assert isinstance(client, SerpApiClient) and (client.apiKey, client.language, client.country) == ("KEY", "en", "us")
