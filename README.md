@@ -35,6 +35,7 @@ All config can also be set via environment variables, so Docker works with `--en
 | `/whoami` | unknown | show your Telegram ID and username; users also see their role and permissions |
 | `/start`, `/help` | user | list the commands available to your role |
 | `/social <link>` | user | download a post from Instagram, Facebook, Twitter/X or Threads; same result as sending the bare link; also works in groups |
+| `/url <link>` | user | read a web page in reader mode and send it as an Instant View article (see "Web pages"); also works in groups |
 | `/users list` | admin | list users with their roles |
 | `/users add <id\|@username> [user\|admin] [name]` | admin | add a user (role defaults to `user`) |
 | `/users update <id\|@username\|name> <user\|admin>` | admin | change a user's role (the role is required) |
@@ -42,6 +43,7 @@ All config can also be set via environment variables, so Docker works with `--en
 | `/restart` | owner | restart the bot process (picks up code and `.env` changes) |
 | `/shutdown` | owner | stop the bot |
 | social network links (no command) | user | sending or mentioning a link downloads the post (see below) |
+| other web links (no command) | user | sending or mentioning any other link works like `/url` |
 
 ## Roles
 
@@ -89,6 +91,37 @@ may never arrive. Fix: in @BotFather send `/setprivacy`, pick the bot, choose **
 bot from the group and add it again** (or make it a group admin). At startup the bot logs whether privacy
 mode is ON or OFF, and every received message is logged (chat type, user id, decision, number of links).
 
+## Web pages (`/url`)
+
+`/url <link>` – or just sending/mentioning any link that is not an Instagram, Facebook, Twitter/X or Threads
+post, with the same private-chat / mention / reply rules as the social links – reads the page in **reader
+mode**: the main text and images only, without ads, menus, cookie banners, comments or footers
+([trafilatura](https://trafilatura.readthedocs.io/)). The article is published as a **Telegraph** page
+(telegra.ph), so Telegram shows its one-tap *Instant View*; the reply is just that link, which Telegram turns into
+a card with the title and a text preview (a note appears above it only if just a teaser was available or an
+archived copy was used). If Telegraph is unreachable, the text is sent as plain messages (up to about 11,000 characters).
+
+- **Telegraph pages are public** to anyone who has the link, and they republish the article text on a third-party
+  service. The account/token is created on first use and kept in `telegraph.json` next to the users file
+  (`0600`, git-ignored); give your own with `--telegraph-token` / `TELEGRAPH_TOKEN`.
+- **Paywalls:** the page is read as the site serves it. Many "paywalled" articles ship their whole text, which is
+  then extracted. If only a teaser comes back (paywall markers plus little text), the bot looks for a copy in the
+  Internet Archive (web.archive.org) and says so in the reply; the page address is sent to that service only in
+  that case. A hard paywall cannot be bypassed; the reply then says only a teaser was available. The Internet
+  Archive only has pages somebody archived, so brand-new articles are rarely found. archive.ph is deliberately not
+  used: it drops connections from anything but a browser.
+- **Sites that refuse the bot:** many news sites sit behind bot protection (DataDome, Cloudflare, ...) and answer a
+  script with HTTP 403 or a challenge page; this is not the paywall itself, and no honest request can pass it.
+  The bot recognises these pages ("That site blocks automated access (bot protection)..."), and for refusals
+  (HTTP 401/402/403/429/451) it looks for an Internet Archive copy the same way as for teasers. Missing pages (404) and
+  server errors never go to an archive. Nothing tries to impersonate a search engine or solve challenges.
+- **Safety:** the bot only fetches public `http`/`https` addresses (ports 80, 443, 8080, 8443). Private, loopback,
+  link-local and cloud-metadata addresses are refused, also after redirects (checked at every hop) and for names
+  that resolve to such addresses (checked again on the real connection). Pages are limited to 4 MB and 20 s,
+  only HTML/plain text is accepted.
+- **Limits:** no JavaScript is executed, so pages that render their content in the browser (some SPAs, YouTube,
+  most social sites) come back empty. Direct links to images, videos and PDFs are refused.
+
 ### Link cleaning
 
 Links are reduced to what identifies the post before anything is downloaded, so tracking noise never reaches
@@ -97,7 +130,8 @@ the networks: Instagram, Twitter/X and Threads keep only the path (no `igsh`, `r
 the older query-based forms only the identifying parameters (`watch/?v=`, `photo.php?fbid=`,
 `permalink.php` / `story.php` with `story_fbid` and `id`). Fragments are dropped, mobile hosts (`m.`, `web.`,
 `mobile.`, `mbasic.`) become the normal host, and the same post linked twice with different tracking is
-answered once.
+answered once. Other web links lose only well-known tracking parameters (`utm_*`, `fbclid`, `gclid`, `mc_eid`, ...) and
+the fragment, because ordinary pages cannot be allow-listed.
 
 ### Accounts
 

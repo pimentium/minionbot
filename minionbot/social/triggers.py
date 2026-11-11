@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from minionbot.social.links import FindLinks
 from minionbot.social.models import Link
+from minionbot.web.urls import FindWebUrls
 
 IGNORE = "ignore"
 PROCESS = "process"
@@ -25,7 +26,8 @@ class Incoming:
 class Decision:
     kind: str
     mentioned: bool = False
-    links: list[Link] = field(default_factory=list)
+    links: list[Link] = field(default_factory=list)  # social network posts (/social)
+    urls: list[str] = field(default_factory=list)  # all other web pages (/url)
 
 
 def MentionPattern(botUsername: str) -> re.Pattern:
@@ -46,7 +48,7 @@ def Decide(isPrivate: bool, botUsername: str, message: Incoming, replied: Incomi
     mentioned = IsMentioned(message.text, botUsername)
     if not isPrivate and (not mentioned or message.text.lstrip().startswith("/")):
         return Decision(IGNORE)
-    links = FindLinks(message.text, message.urls)
-    if not links and replied is not None and mentioned:
-        links = FindLinks(replied.text, replied.urls)
-    return Decision(PROCESS if links else NO_LINKS, mentioned, links)
+    links, urls = FindLinks(message.text, message.urls), FindWebUrls(message.text, message.urls)
+    if not links and not urls and replied is not None and mentioned:
+        links, urls = FindLinks(replied.text, replied.urls), FindWebUrls(replied.text, replied.urls)
+    return Decision(PROCESS if links or urls else NO_LINKS, mentioned, links, urls)

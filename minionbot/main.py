@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 import sys
+from pathlib import Path
 from typing import Sequence
 
 from dotenv import load_dotenv
@@ -22,6 +23,10 @@ from minionbot.social.instagram import InstagramDownloader
 from minionbot.social.models import DownloadError, SocialAccount
 from minionbot.social.service import SocialService
 from minionbot.supervisor import RunForever
+from minionbot.web.archive import Wayback
+from minionbot.web.fetcher import PageFetcher
+from minionbot.web.service import WebService
+from minionbot.web.telegraph import TelegraphClient
 from minionbot.users import UserStore
 
 
@@ -34,6 +39,7 @@ def ParseArgs(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.add_argument(f"--{network}-cookies", help=f"{network} cookies file, Netscape format (overrides {network.upper()}_COOKIES_FILE)")
     parser.add_argument("--twitter-auth-token", help="value of the auth_token cookie from a logged-in x.com browser session (overrides TWITTER_AUTH_TOKEN)")
     parser.add_argument("--instagram-session-id", help="value of the sessionid cookie from a logged-in instagram.com browser session (overrides INSTAGRAM_SESSION_ID)")
+    parser.add_argument("--telegraph-token", help="Telegraph access token for /url articles; created automatically if omitted (overrides TELEGRAPH_TOKEN)")
     return parser.parse_args(argv)
 
 
@@ -73,8 +79,8 @@ def Main(argv: Sequence[str] | None = None) -> None:
     startReason = os.environ.pop(RESTART_REASON_ENV, "")
     load_dotenv()
     ConfigureLogging()
-    config = LoadConfig(botToken=args.token, initialUser=args.initial_user, usersFile=args.users_file, accountOverrides=AccountOverrides(args))
-    secrets = [config.botToken] + [v for a in config.accounts.values() for v in (a.sessionId, a.authToken)]
+    config = LoadConfig(botToken=args.token, initialUser=args.initial_user, usersFile=args.users_file, accountOverrides=AccountOverrides(args), telegraphToken=args.telegraph_token)
+    secrets = [config.botToken, config.telegraphToken] + [v for a in config.accounts.values() for v in (a.sessionId, a.authToken)]
     RedactSecrets(secrets)
     store = UserStore(config.usersFile)
     owner = store.EnsureInitialUser(config.initialUser)
@@ -94,7 +100,12 @@ def Main(argv: Sequence[str] | None = None) -> None:
         service = SocialService(downloaders, MediaFetcher())
         restartInfo = f"restart #{restartCount} after: {lastError}" if restartCount else startReason
         control = BotControl()
-        application = BuildApplication(config, store, BuildRegistry(), service, restartInfo, control)
+        webService = WebService(
+            PageFetcher(),
+            TelegraphClient(Path(config.usersFile).parent / "telegraph.json", config.telegraphToken),
+            [Wayback()],
+        )
+        application = BuildApplication(config, store, BuildRegistry(), service, restartInfo, control, webService)
         asyncio.set_event_loop(asyncio.new_event_loop())
         application.run_polling()
         finalAction["requested"] = control.requested

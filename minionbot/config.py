@@ -22,6 +22,7 @@ class Config:
     initialUser: str
     usersFile: str
     accounts: dict[str, SocialAccount] = field(default_factory=dict)
+    telegraphToken: str = ""  # optional; otherwise an account is created on first use
 
 
 def LoadAccounts(env: Mapping[str, str], overrides: Mapping[str, SocialAccount] | None) -> dict[str, SocialAccount]:
@@ -46,6 +47,7 @@ def LoadConfig(
     initialUser: str | None = None,
     usersFile: str | None = None,
     accountOverrides: Mapping[str, SocialAccount] | None = None,
+    telegraphToken: str | None = None,
 ) -> Config:
     """Explicit arguments (e.g. from the command line) win over environment variables."""
     env = os.environ if env is None else env
@@ -60,4 +62,5 @@ def LoadConfig(
         owner,
         (usersFile or env.get("USERS_FILE", "")).strip() or DEFAULT_USERS_FILE,
         LoadAccounts(env, accountOverrides),
+        (telegraphToken or env.get("TELEGRAPH_TOKEN", "")).strip(),
     )

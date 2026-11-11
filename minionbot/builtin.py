@@ -102,6 +102,14 @@ def SocialCommand(context: CommandContext) -> str:
     return SOCIAL_USAGE
 
 
+URL_USAGE = "Usage: /url <link to a web page>"
+
+
+def UrlCommand(context: CommandContext) -> str:
+    """Placeholder: /url needs chat I/O, so the Telegram adapter runs it (see bot.py)."""
+    return URL_USAGE
+
+
 def RequestControl(context: CommandContext, action: str, text: str) -> str:
     if context.control is None:
         raise UserError("This command is not available here.")
@@ -128,6 +136,16 @@ def BuildRegistry() -> CommandRegistry:
             "social",
             SocialCommand,
             help=(("/social <link>", "download a post from Instagram, Facebook, Twitter/X or Threads"),),
+            minRole=Role.USER,
+            inGroups=True,
+            needsChat=True,
+        )
+    )
+    registry.Register(
+        Command(
+            "url",
+            UrlCommand,
+            help=(("/url <link>", "read a web page in reader mode (no ads or paywall clutter) as an Instant View article"),),
             minRole=Role.USER,
             inGroups=True,
             needsChat=True,
