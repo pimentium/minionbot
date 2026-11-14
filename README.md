@@ -36,6 +36,7 @@ All config can also be set via environment variables, so Docker works with `--en
 | `/start`, `/help` | user | list the commands available to your role |
 | `/social <link>` | user | download a post from Instagram, Facebook, Twitter/X or Threads; same result as sending the bare link; also works in groups |
 | `/url <link>` | user | read a web page in reader mode and send it as an Instant View article (see "Web pages"); also works in groups |
+| `/rus <link>`, `/eng <link>` | user | like `/url`, but the page is translated to Russian / English with Gemini first (see "Translation"); also work in groups |
 | `/google <query>` | user | search Google: the AI overview (when Google shows one) and the top results, via SerpApi; also works in groups |
 | `/users list` | admin | list users with their roles |
 | `/users add <id\|@username> [user\|admin] [name]` | admin | add a user (role defaults to `user`) |
@@ -45,6 +46,14 @@ All config can also be set via environment variables, so Docker works with `--en
 | `/shutdown` | owner | stop the bot |
 | social network links (no command) | user | sending or mentioning a link downloads the post (see below) |
 | other web links (no command) | user | sending or mentioning any other link works like `/url` |
+
+### Commands addressed by mention
+
+Telegram treats only a message that *starts* with `/` as a command. In a chat you will often write the bot's name
+first, so the group-capable commands (`/social`, `/url`, `/rus`, `/eng`, `/google`) also work as
+`@BotName /rus <link>` or `@BotName /google <query>`, in groups and in private chats. They also look at the message
+you reply to when your own message has no link, so replying with `@BotName /rus` (or just `/rus`) to a message with
+a link translates that link. Private-only commands (`/users`, `/restart`, ...) are never run this way.
 
 ## Roles
 
@@ -91,6 +100,38 @@ replies to the bot's own messages, so an `@botname` message or an `@botname` rep
 may never arrive. Fix: in @BotFather send `/setprivacy`, pick the bot, choose **Disable**, then **remove the
 bot from the group and add it again** (or make it a group admin). At startup the bot logs whether privacy
 mode is ON or OFF, and every received message is logged (chat type, user id, decision, number of links).
+
+## Translation (`/rus`, `/eng`)
+
+`/rus <link>` and `/eng <link>` do what `/url` does (reader mode, Telegraph page, Instant View card, same safety
+rules and paywall/archive handling) but translate the article **before** it is published. They need a Gemini API
+key (free tier works; create one in Google AI Studio):
+
+```bash
+.venv/bin/python main.py ... --gemini-key <GEMINI_API_KEY>      # or GEMINI_API_KEY in the environment / .env
+```
+
+Optional: `--gemini-model` / `GEMINI_MODEL` (default `gemini-3.5-flash-lite`, the model Google's docs recommend for
+translation; if Google retires it, set another one). Without a key the commands say translation is not configured.
+
+- **How it translates:** the title and every text block (paragraphs, headings, list items, quotes, captions) are sent
+  in batches of up to 6,000 characters; code blocks and images are left alone. Links, bold and italics stay in
+  place, and the model cannot add links: only the source's own link addresses survive. A typical long article
+  (about 23,000 characters) takes about 6 requests. At most 30,000 characters of a page are translated; a longer page
+  is cut at a paragraph boundary and the reply says so. The Telegraph page ends with a "Machine translation
+  (Gemini)" note and the source link.
+- **Already in the target language:** a page that is already Russian (for `/rus`) or English (for `/eng`) is not sent
+  to Gemini; the reply just says so. Other Cyrillic languages such as Ukrainian are still translated.
+- **Limits and errors:** the free tier has per-minute and per-day request limits that Google does not publish in its
+  docs. The bot retries with backoff when it is rate limited (waiting up to about a minute) and then answers that
+  the service is busy; a used-up daily quota is reported as such. A rejected key or an unknown model is reported to
+  the user in one line and to the owner as a notification.
+- **Privacy:** on the **free tier Google may use what you send to improve its products, and human reviewers may read
+  it** (Google's terms say not to send sensitive or confidential data). Only the text of public web pages that
+  users ask for is sent, together with nothing else from the chat; a paid (billing-enabled) key is not used this way.
+  The key is sent in a request header, never in a URL, and is redacted from logs.
+- Machine translation can be wrong or awkward, especially for names, idioms and technical text. The original is one
+  tap away in the source link.
 
 ## Google search (`/google`)
 

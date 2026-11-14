@@ -34,3 +34,11 @@ class HttpStatusError(WebError):
     def refused(self) -> bool:
         """Worth trying an archived copy: access was refused, the page itself is probably fine."""
         return self.botProtection or self.status in REFUSAL_STATUSES
+
+
+class TranslationError(WebError):
+    """The page was read but could not be translated."""
+
+
+class TranslationServiceError(TranslationError):
+    """The translation service has a problem the owner must fix (bad key, unknown model)."""

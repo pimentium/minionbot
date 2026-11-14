@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Mapping
 
 from minionbot.social.factory import NETWORKS
+from minionbot.translate.gemini import DEFAULT_MODEL
 from minionbot.social.models import SocialAccount
 
 DEFAULT_USERS_FILE = "data/users.json"
@@ -26,6 +27,8 @@ class Config:
     serpApiKey: str = ""  # SerpApi key for /google; without it /google says it is not configured
     googleLanguage: str = "en"  # hl; Google shows AI overviews for English only
     googleCountry: str = ""  # gl; empty = Google decides
+    geminiKey: str = ""  # Gemini API key for /rus and /eng; without it they say translation is not configured
+    geminiModel: str = DEFAULT_MODEL
 
 
 def LoadAccounts(env: Mapping[str, str], overrides: Mapping[str, SocialAccount] | None) -> dict[str, SocialAccount]:
@@ -54,6 +57,8 @@ def LoadConfig(
     serpApiKey: str | None = None,
     googleLanguage: str | None = None,
     googleCountry: str | None = None,
+    geminiKey: str | None = None,
+    geminiModel: str | None = None,
 ) -> Config:
     """Explicit arguments (e.g. from the command line) win over environment variables."""
     env = os.environ if env is None else env
@@ -72,4 +77,6 @@ def LoadConfig(
         (serpApiKey or env.get("SERPAPI_KEY", "")).strip(),
         (googleLanguage or env.get("GOOGLE_LANGUAGE", "")).strip().lower() or "en",
         (googleCountry or env.get("GOOGLE_COUNTRY", "")).strip().lower(),
+        (geminiKey or env.get("GEMINI_API_KEY", "")).strip(),
+        (geminiModel or env.get("GEMINI_MODEL", "")).strip() or DEFAULT_MODEL,
     )

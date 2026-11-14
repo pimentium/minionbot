@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from minionbot.web.archive import ArchiveProvider
+from minionbot.translate.articles import Translator, TranslateArticle
+from minionbot.translate.language import LANGUAGE_NAMES, IsAlready
 from minionbot.web.errors import HttpStatusError, UnexpectedWebError, WebError
 from minionbot.web.fetcher import PageFetcher
 from minionbot.web.reader import MIN_FULL_ARTICLE_CHARS, MIN_READABLE_CHARS, Article, ExtractArticle, FirstParagraph
@@ -36,7 +38,14 @@ def Summarize(article: Article) -> str:
 
 
 class WebService:
-    def __init__(self, fetcher: PageFetcher, telegraph: TelegraphClient | None, archives: list[ArchiveProvider] | None = None):
+    def __init__(
+        self,
+        fetcher: PageFetcher,
+        telegraph: TelegraphClient | None,
+        archives: list[ArchiveProvider] | None = None,
+        translator: Translator | None = None,
+    ):
+        self.translator = translator
         self.fetcher = fetcher
         self.telegraph = telegraph
         self.archives = archives or []
@@ -45,19 +54,24 @@ class WebService:
         await self.fetcher.Close()
         if self.telegraph:
             await self.telegraph.Close()
+        if self.translator is not None and hasattr(self.translator, "Close"):
+            await self.translator.Close()
 
-    async def Read(self, url: str) -> WebResult:
-        """Reader-mode version of url. Raises WebError with a user-facing message."""
+    async def Read(self, url: str, language: str | None = None) -> WebResult:
+        """Reader-mode version of url, translated to `language` ("ru"/"en") if given. Raises WebError."""
+        if language and self.translator is None:
+            raise WebError("Translation is not configured (the owner needs to set a Gemini API key).")
         try:
-            return await self._Read(url)
+            return await self._Read(url, language)
         except WebError:
             raise
         except Exception as error:
             LOGGER.exception("Unexpected failure reading %s", url)
             raise UnexpectedWebError(f"Sorry, something went wrong while reading {url}") from error
 
-    async def _Read(self, url: str) -> WebResult:
+    async def _Read(self, url: str, language: str | None = None) -> WebResult:
         notes: list[str] = []
+        pageNotes: list[str] = []  # footer of the Telegraph page only
         sourceUrl = url
         try:
             page = await self.fetcher.Fetch(url)
@@ -78,6 +92,15 @@ class WebService:
                     notes = ["Only a teaser was available; the full text is behind a paywall."]
         if article is None:
             raise WebError(NOTHING_READABLE)
+        if language:
+            name = LANGUAGE_NAMES[language]
+            if IsAlready(article.text, language):
+                notes.append(f"The page is already in {name}, so it was not translated.")
+            else:
+                article, cut = await TranslateArticle(article, self.translator, language)
+                pageNotes.append(f"Machine translation to {name} (Gemini). The original is at the source link below.")
+                if cut:
+                    notes.append("Only the first part of this long page was translated.")
         result = WebResult(
             sourceUrl=sourceUrl,
             title=article.title,
@@ -90,7 +113,7 @@ class WebService:
         if self.telegraph is not None:
             try:
                 result.telegraphUrl = await self.telegraph.CreatePage(
-                    article.title, article.author or result.siteName, sourceUrl, self._WithSource(article, sourceUrl, notes), sourceUrl
+                    article.title, article.author or result.siteName, sourceUrl, self._WithSource(article, sourceUrl, notes + pageNotes), sourceUrl
                 )
             except WebError as error:
                 LOGGER.warning("Telegraph unavailable (%s); sending text instead", error)

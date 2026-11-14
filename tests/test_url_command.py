@@ -30,11 +30,13 @@ def Result(telegraph=TELEGRAPH, text="Body text. " * 50, notes=()):
 
 
 class FakeWeb:
-    def __init__(self, result=None, error=None):
-        self.result, self.error, self.read = result or Result(), error, []
+    def __init__(self, result=None, error=None, translator=object()):
+        self.result, self.error, self.read, self.languages = result or Result(), error, [], []
+        self.translator = translator
 
-    async def Read(self, url):
+    async def Read(self, url, language=None):
         self.read.append(url)
+        self.languages.append(language)
         if self.error:
             raise self.error
         return self.result

@@ -25,6 +25,9 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
 - `minionbot/social/`: `links.py` (URL classification), `triggers.py` (when to react / which links),
   `instagram.py` (instagrapi, sessionid cookie), `gallerydl.py` (Twitter/Facebook + Twitter thread merge), `threads.py`
   (custom page reader), `fetch.py` (media download + size limits), `videoinfo.py` (pure-Python MP4 width/height/duration), `format.py`, `service.py`, `factory.py`.
+- `minionbot/translate/`: `/rus` `/eng`. `gemini.py` (client: header key, JSON array in/out, strict length check,
+  batch halving, retries), `articles.py` (block-wise translation that keeps inline markup; only the source's own
+  hrefs survive), `language.py` (skip pages already in the target language).
 - `minionbot/search/`: `/google`. `serpapi.py` (SerpApi client + tolerant parsing of organic_results and ai_overview;
   second request with `engine=google_ai_overview&page_token=` when only a token is returned), `format.py` (Telegram
   HTML, everything escaped, split on line boundaries), `models.py`.
@@ -49,6 +52,10 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
   implemented in `bot.py` (`MakeSocialCommandCallback` etc.); their sync handler is only a usage fallback.
   They use `registry.Authorize` for the role check and `inGroups=True` makes them work in groups too.
   `/social` and the implicit link handler share `ProcessLinks`.
+- `@bot /cmd args` (mention first) is parsed by `ParseMentionCommand` in the catch-all `MakeMessageCallback` and
+  dispatched to the same callbacks (`ArgsContext` supplies `args`); only commands with `needsChat and inGroups` are
+  reachable this way, never private-only ones. Link-taking commands fall back to the replied-to message
+  (`CommandSources`). Without this a mention + `/rus` silently became plain `/url` (found by the owner).
 - New commands: write `Handler(context) -> str`, register in `BuildRegistry` with help lines and `minRole`.
 
 - Link cleaning (`links.py`) is an ALLOWLIST: keep the path (or for old Facebook forms only v / fbid /
@@ -66,6 +73,12 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
   404/5xx never do. Do not add UA/crawler impersonation or challenge solving (owner chose archives only).
   SSRF protection in `web/safety.py` + `fetcher.py` is mandatory: never fetch user URLs around it. Implicit
   handling: any non-social URL in a private message / mention / mention-reply is treated like `/url`.
+- `/rus` `/eng` = `/url` + `TranslateArticle` inside `WebService.Read(url, language)` before the Telegraph page is
+  created (same `MakeUrlCommandCallback`, `language` param). Gemini via `generateContent` with only
+  `responseMimeType: application/json` (no response schema: its generateContent form is undocumented) and strict
+  validation of the answer. Invalid key is HTTP 400 `API_KEY_INVALID` (not 401). Free tier: Google may use the data
+  to improve products (owner knows/chose free tier). Translation key/model errors (`TranslationServiceError`)
+  notify the owner. Page text is untrusted: prompt says translate only, output is validated, hrefs are whitelisted.
 - `/google`: SerpApi chosen by the owner (scraping Google is blocked and against its terms; AI overview is not in the
   HTML scripts receive). The key is in the URL query, so httpx errors/URLs must never be logged or shown: the client
   maps errors to its own messages and scrubs the key; key is in the redaction secrets. Key/quota errors
@@ -100,9 +113,11 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
 Tests use mocks/fixtures. Checked against real Telegram with a FAKE token only: invalid token exits fatally, two
 run_polling calls in one process work. Owner notifications, /restart, /shutdown and crash/restart are NOT verified live (re-exec itself was checked
 with a probe script, as script and as `-m`). Verified live by the owner: Instagram (sessionid) and Twitter (auth_token) downloads.
-Verified live by the agent (read-only, anonymous): SerpApi error format with an invalid key (HTTP 401 + JSON error); /url fetch+reader on gnu.org, python.org, example.com; SSRF
+Verified live by the agent (read-only, anonymous): Gemini invalid-key answer (HTTP 400 API_KEY_INVALID) and a real
+23k-char page through the translation round trip with a pretend translator (links/headings/lists intact); SerpApi error format with an invalid key (HTTP 401 + JSON error); /url fetch+reader on gnu.org, python.org, example.com; SSRF
 blocks incl. localtest.me; Wayback lookup; Facebook share post and a Threads 8-part text thread.
-NOT verified: a real /google search (no SerpApi key during development; the AI overview and page_token flows rely on
+NOT verified: any real Gemini translation (no key during development; prompt quality, the free-tier limits and
+the default model name rest on Google's docs), a real /google search (no SerpApi key during development; the AI overview and page_token flows rely on
 SerpApi's documentation, the second response format is not documented), publishing to Telegraph and Instant View in real Telegram (deliberately not published during
 development), Threads posts with images/video, Facebook video posts, the video aspect-ratio fix in real Telegram. The MP4 reader was checked
 against ffprobe on generated files.

@@ -24,6 +24,7 @@ from minionbot.social.models import DownloadError, SocialAccount
 from minionbot.social.service import SocialService
 from minionbot.search.serpapi import SerpApiClient
 from minionbot.supervisor import RunForever
+from minionbot.translate.gemini import GeminiClient
 from minionbot.web.archive import Wayback
 from minionbot.web.fetcher import PageFetcher
 from minionbot.web.service import WebService
@@ -43,6 +44,8 @@ def ParseArgs(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--serpapi-key", help="SerpApi API key for /google (overrides SERPAPI_KEY)")
     parser.add_argument("--google-language", help="Google interface language, default en; AI overviews exist for English only (overrides GOOGLE_LANGUAGE)")
     parser.add_argument("--google-country", help="Google country code, e.g. us (overrides GOOGLE_COUNTRY)")
+    parser.add_argument("--gemini-key", help="Gemini API key for /rus and /eng translation (overrides GEMINI_API_KEY)")
+    parser.add_argument("--gemini-model", help="Gemini model for translation (overrides GEMINI_MODEL)")
     parser.add_argument("--telegraph-token", help="Telegraph access token for /url articles; created automatically if omitted (overrides TELEGRAPH_TOKEN)")
     return parser.parse_args(argv)
 
@@ -85,8 +88,9 @@ def Main(argv: Sequence[str] | None = None) -> None:
     ConfigureLogging()
     config = LoadConfig(botToken=args.token, initialUser=args.initial_user, usersFile=args.users_file, accountOverrides=AccountOverrides(args), telegraphToken=args.telegraph_token,
         serpApiKey=args.serpapi_key, googleLanguage=args.google_language, googleCountry=args.google_country,
+        geminiKey=args.gemini_key, geminiModel=args.gemini_model,
     )
-    secrets = [config.botToken, config.telegraphToken, config.serpApiKey] + [v for a in config.accounts.values() for v in (a.sessionId, a.authToken)]
+    secrets = [config.botToken, config.telegraphToken, config.serpApiKey, config.geminiKey] + [v for a in config.accounts.values() for v in (a.sessionId, a.authToken)]
     RedactSecrets(secrets)
     store = UserStore(config.usersFile)
     owner = store.EnsureInitialUser(config.initialUser)
@@ -110,6 +114,7 @@ def Main(argv: Sequence[str] | None = None) -> None:
             PageFetcher(),
             TelegraphClient(Path(config.usersFile).parent / "telegraph.json", config.telegraphToken),
             [Wayback()],
+            GeminiClient(config.geminiKey, config.geminiModel) if config.geminiKey else None,
         )
         searchClient = SerpApiClient(config.serpApiKey, config.googleLanguage, config.googleCountry) if config.serpApiKey else None
         application = BuildApplication(config, store, BuildRegistry(), service, restartInfo, control, webService, searchClient)

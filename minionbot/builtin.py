@@ -104,6 +104,8 @@ def SocialCommand(context: CommandContext) -> str:
 
 URL_USAGE = "Usage: /url <link to a web page>"
 GOOGLE_USAGE = "Usage: /google <what to search for>"
+RUS_USAGE = "Usage: /rus <link to a web page>  (reads it translated to Russian)"
+ENG_USAGE = "Usage: /eng <link to a web page>  (reads it translated to English)"
 
 
 def UrlCommand(context: CommandContext) -> str:
@@ -114,6 +116,16 @@ def UrlCommand(context: CommandContext) -> str:
 def GoogleCommand(context: CommandContext) -> str:
     """Placeholder: /google needs chat I/O, so the Telegram adapter runs it (see bot.py)."""
     return GOOGLE_USAGE
+
+
+def RusCommand(context: CommandContext) -> str:
+    """Placeholder: /rus needs chat I/O, so the Telegram adapter runs it (see bot.py)."""
+    return RUS_USAGE
+
+
+def EngCommand(context: CommandContext) -> str:
+    """Placeholder: /eng needs chat I/O, so the Telegram adapter runs it (see bot.py)."""
+    return ENG_USAGE
 
 
 def RequestControl(context: CommandContext, action: str, text: str) -> str:
@@ -157,6 +169,17 @@ def BuildRegistry() -> CommandRegistry:
             needsChat=True,
         )
     )
+    for name, handler, language in (("rus", RusCommand, "Russian"), ("eng", EngCommand, "English")):
+        registry.Register(
+            Command(
+                name,
+                handler,
+                help=((f"/{name} <link>", f"like /url, but the page is translated to {language} (Gemini) first"),),
+                minRole=Role.USER,
+                inGroups=True,
+                needsChat=True,
+            )
+        )
     registry.Register(
         Command(
             "google",

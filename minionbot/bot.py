@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import tempfile
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from telegram.constants import ChatAction, ChatType, ParseMode
 from telegram.error import Conflict, NetworkError
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-from minionbot.builtin import GOOGLE_USAGE, SOCIAL_USAGE, URL_USAGE
+from minionbot.builtin import ENG_USAGE, GOOGLE_USAGE, RUS_USAGE, SOCIAL_USAGE, URL_USAGE
 from minionbot.commands import UNKNOWN_COMMAND_TEXT, CommandRegistry
 from minionbot.config import Config
 from minionbot.control import BotControl
@@ -25,7 +26,7 @@ from minionbot.social.links import FindLinks
 from minionbot.social.models import PHOTO, DownloadError, LocalMedia, Post, UnexpectedDownloadError
 from minionbot.social.service import SocialService
 from minionbot.social.triggers import IGNORE, NO_LINKS, Decide, Incoming
-from minionbot.web.errors import UnexpectedWebError, WebError
+from minionbot.web.errors import TranslationServiceError, UnexpectedWebError, WebError
 from minionbot.web.service import WebResult, WebService
 from minionbot.web.urls import FindWebUrls
 from minionbot.users import SOCIAL_LINKS_MIN_ROLE, UserStore
@@ -71,6 +72,33 @@ def ToIncoming(message: Message | None) -> Incoming | None:
     entities = message.entities or message.caption_entities or ()
     urls = [e.url for e in entities if e.type == MessageEntity.TEXT_LINK and e.url]
     return Incoming(message.text or message.caption or "", urls)
+
+
+def CommandSources(message: Message) -> list[Incoming]:
+    """Where a command looks for links: its own text first, then the message it replies to."""
+    replied = ReplySource(message)
+    return [ToIncoming(message)] + ([replied] if replied else [])
+
+
+def MentionCommandPattern(botUsername: str) -> re.Pattern:
+    return re.compile(rf"(?<![\w@])@{re.escape(botUsername)}\b[\s,:;-]*/(\w+)(?:@{re.escape(botUsername)})?(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
+
+
+def ParseMentionCommand(text: str, botUsername: str) -> tuple[str, str] | None:
+    """'@bot /rus <link>' -> ('rus', '<link>'). Telegram only treats a message that STARTS with / as a command, so
+    this form (natural in groups, where you address the bot by name) is recognised here."""
+    match = MentionCommandPattern(botUsername).search(text or "") if botUsername else None
+    return (match.group(1).lower(), (match.group(2) or "").strip()) if match else None
+
+
+class ArgsContext:
+    """The real context, but with the arguments of the command that followed the mention."""
+
+    def __init__(self, context, args: list[str]):
+        self.wrapped, self.args = context, args
+
+    def __getattr__(self, name: str):
+        return getattr(self.wrapped, name)
 
 
 def VideoShape(item: LocalMedia) -> dict:
@@ -167,8 +195,7 @@ def MakeSocialCommandCallback(registry: CommandRegistry, store: UserStore, servi
         if denial is not None:
             await message.reply_text(denial)
             return
-        incoming = ToIncoming(message)
-        links = FindLinks(incoming.text, incoming.urls)
+        links = next((found for source in CommandSources(message) if (found := FindLinks(source.text, source.urls))), [])
         if not links:
             await message.reply_text(SOCIAL_USAGE)
             return
@@ -208,7 +235,9 @@ async def ReplyWithArticle(message: Message, result: WebResult) -> None:
     await message.reply_text(f"{tail}Source: {result.sourceUrl}", link_preview_options=NO_PREVIEW)
 
 
-async def ProcessUrls(message: Message, chat, urls: list[str], webService: WebService | None, notifier: Notifier | None) -> None:
+async def ProcessUrls(
+    message: Message, chat, urls: list[str], webService: WebService | None, notifier: Notifier | None, language: str | None = None
+) -> None:
     """Read each web page and reply with it, one reply per URL (shared by the implicit handler and /url)."""
     for url in urls:
         if webService is None:
@@ -216,11 +245,13 @@ async def ProcessUrls(message: Message, chat, urls: list[str], webService: WebSe
             return
         await chat.send_action(ChatAction.TYPING)
         try:
-            await ReplyWithArticle(message, await webService.Read(url))
+            await ReplyWithArticle(message, await webService.Read(url, language))
         except WebError as error:
             await message.reply_text(f"{error}\n{url}", link_preview_options=NO_PREVIEW)
             if isinstance(error, UnexpectedWebError) and notifier:
                 await notifier.ReportFailure("reading a web page", error.__cause__ or error)
+            elif isinstance(error, TranslationServiceError) and notifier:
+                await notifier.ReportFailure("translating a web page (Gemini)", error)
         except Exception as error:
             LOGGER.exception("Failed to reply for %s", url)
             await message.reply_text(f"Sorry, I couldn't send the result for {url}", link_preview_options=NO_PREVIEW)
@@ -228,24 +259,35 @@ async def ProcessUrls(message: Message, chat, urls: list[str], webService: WebSe
                 await notifier.ReportFailure("sending a web page result", error)
 
 
-def MakeUrlCommandCallback(registry: CommandRegistry, store: UserStore, webService: WebService | None, notifier: Notifier | None = None):
-    """/url <link...>: the explicit version of the implicit web page handling."""
+def MakeUrlCommandCallback(
+    registry: CommandRegistry,
+    store: UserStore,
+    webService: WebService | None,
+    notifier: Notifier | None = None,
+    name: str = "url",
+    language: str | None = None,
+    usage: str = URL_USAGE,
+):
+    """/url <link...> (and /rus, /eng: the same, translated first): the explicit version of the web page handling."""
 
     async def Callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message, sender, chat = update.effective_message, update.effective_user, update.effective_chat
         if message is None or sender is None or chat is None:
             return
-        _, denial = registry.Authorize("url", sender.id, sender.username, store)
+        _, denial = registry.Authorize(name, sender.id, sender.username, store)
         if denial is not None:
             await message.reply_text(denial)
             return
-        incoming = ToIncoming(message)
-        urls = FindWebUrls(incoming.text, incoming.urls)
+        sources = CommandSources(message)
+        urls = next((found for source in sources if (found := FindWebUrls(source.text, source.urls))), [])
         if not urls:
-            social = FindLinks(incoming.text, incoming.urls)
-            await message.reply_text("That is a social network post: use /social <link>." if social else URL_USAGE)
+            social = any(FindLinks(source.text, source.urls) for source in sources)
+            await message.reply_text("That is a social network post: use /social <link>." if social else usage)
             return
-        await ProcessUrls(message, chat, urls, webService, notifier)
+        if language and (webService is None or webService.translator is None):
+            await message.reply_text("Translation is not configured (the owner needs to set a Gemini API key).")
+            return
+        await ProcessUrls(message, chat, urls, webService, notifier, language)
 
     return Callback
 
@@ -290,12 +332,25 @@ def MakeGoogleCommandCallback(registry: CommandRegistry, store: UserStore, searc
     return Callback
 
 
-def MakeMessageCallback(store: UserStore, service: SocialService, notifier: Notifier | None = None, webService: WebService | None = None):
+def MakeMessageCallback(
+    store: UserStore,
+    service: SocialService,
+    notifier: Notifier | None = None,
+    webService: WebService | None = None,
+    mentionCommands: dict | None = None,
+):
+    """mentionCommands: callbacks of the commands that also work as '@bot /command ...' (those allowed in groups)."""
+
     async def Callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message, sender, chat = update.effective_message, update.effective_user, update.effective_chat
         if message is None or sender is None or chat is None:
             return
         incoming = ToIncoming(message)
+        command = ParseMentionCommand(incoming.text, context.bot.username or "") if mentionCommands else None
+        if command and command[0] in mentionCommands:
+            LOGGER.info("Message in %s chat %s from user %s: mention command /%s", chat.type, chat.id, sender.id, command[0])
+            await mentionCommands[command[0]](update, ArgsContext(context, command[1].split()))
+            return
         replied = ReplySource(message)
         decision = Decide(chat.type == ChatType.PRIVATE, context.bot.username or "", incoming, replied)
         LOGGER.info("Message in %s chat %s from user %s: %s, %d link(s)", chat.type, chat.id, sender.id, decision.kind, len(decision.links))
@@ -391,7 +446,7 @@ def BuildApplication(
 ) -> Application:
     builder = ApplicationBuilder().token(config.botToken).concurrent_updates(True).read_timeout(30).write_timeout(UPLOAD_TIMEOUT)
     application = builder.build()
-    secrets = [config.botToken, config.telegraphToken, config.serpApiKey] + [v for a in config.accounts.values() for v in (a.sessionId, a.authToken)]
+    secrets = [config.botToken, config.telegraphToken, config.serpApiKey, config.geminiKey] + [v for a in config.accounts.values() for v in (a.sessionId, a.authToken)]
     notifier = Notifier(application.bot, store, secrets)
     application.post_init = MakePostInit(notifier, restartInfo)
     application.post_shutdown = MakePostShutdown(service, webService, searchClient)
@@ -400,6 +455,8 @@ def BuildApplication(
     chatCommands = {
         "social": MakeSocialCommandCallback(registry, store, service, notifier),
         "url": MakeUrlCommandCallback(registry, store, webService, notifier),
+        "rus": MakeUrlCommandCallback(registry, store, webService, notifier, "rus", "ru", RUS_USAGE),
+        "eng": MakeUrlCommandCallback(registry, store, webService, notifier, "eng", "en", ENG_USAGE),
         "google": MakeGoogleCommandCallback(registry, store, searchClient, notifier),
     }
     for name, command in registry.commands.items():
@@ -407,7 +464,8 @@ def BuildApplication(
         # Most commands expose bot internals (user list, restart), so they are private-chat only.
         application.add_handler(CommandHandler(name, callback, filters=filters.ALL if command.inGroups else PRIVATE))
     # Everything else: social links, mentions, strangers, unknown commands.
-    application.add_handler(MessageHandler(filters.ALL, MakeMessageCallback(store, service, notifier, webService)))
+    mentionCommands = {name: chatCommands[name] for name, command in registry.commands.items() if command.needsChat and command.inGroups}
+    application.add_handler(MessageHandler(filters.ALL, MakeMessageCallback(store, service, notifier, webService, mentionCommands)))
     return application
 
 
