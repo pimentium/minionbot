@@ -214,3 +214,18 @@ def test_the_translator_exists_only_with_a_key(monkeypatch, tmp_path):
     main.Main(base + ["--gemini-key", "KEY", "--gemini-model", "gemini-z"])
     translator = webService.call_args[0][3]
     assert isinstance(translator, GeminiClient) and (translator.apiKey, translator.model) == ("KEY", "gemini-z")
+
+
+def test_one_gemini_client_serves_translation_and_the_gemini_command(monkeypatch, tmp_path):
+    for name in ("BOT_TOKEN", "INITIAL_USER", "USERS_FILE", "GEMINI_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(main, "load_dotenv", lambda: None)
+    monkeypatch.setattr(main, "MediaFetcher", MagicMock())
+    build, webService = MagicMock(return_value=MagicMock()), MagicMock()
+    monkeypatch.setattr(main, "BuildApplication", build)
+    monkeypatch.setattr(main, "WebService", webService)
+    main.Main(["--token", "1:T", "--initial-user", "42", "--users-file", str(tmp_path / "u.json"), "--gemini-key", "KEY"])
+    translator, forCommand = webService.call_args[0][3], build.call_args[0][8]
+    assert isinstance(forCommand, GeminiClient) and translator is forCommand
+    main.Main(["--token", "1:T", "--initial-user", "42", "--users-file", str(tmp_path / "u.json")])
+    assert build.call_args[0][8] is None

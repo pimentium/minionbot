@@ -104,6 +104,7 @@ def SocialCommand(context: CommandContext) -> str:
 
 URL_USAGE = "Usage: /url <link to a web page>"
 GOOGLE_USAGE = "Usage: /google <what to search for>"
+GEMINI_USAGE = "Usage: /gemini <your question or prompt>"
 RUS_USAGE = "Usage: /rus <link to a web page>  (reads it translated to Russian)"
 ENG_USAGE = "Usage: /eng <link to a web page>  (reads it translated to English)"
 
@@ -116,6 +117,11 @@ def UrlCommand(context: CommandContext) -> str:
 def GoogleCommand(context: CommandContext) -> str:
     """Placeholder: /google needs chat I/O, so the Telegram adapter runs it (see bot.py)."""
     return GOOGLE_USAGE
+
+
+def GeminiCommand(context: CommandContext) -> str:
+    """Placeholder: /gemini needs chat I/O, so the Telegram adapter runs it (see bot.py)."""
+    return GEMINI_USAGE
 
 
 def RusCommand(context: CommandContext) -> str:
@@ -180,6 +186,16 @@ def BuildRegistry() -> CommandRegistry:
                 needsChat=True,
             )
         )
+    registry.Register(
+        Command(
+            "gemini",
+            GeminiCommand,
+            help=(("/gemini <prompt>", "ask Gemini anything: the text after the command is sent as the prompt"),),
+            minRole=Role.USER,
+            inGroups=True,
+            needsChat=True,
+        )
+    )
     registry.Register(
         Command(
             "google",

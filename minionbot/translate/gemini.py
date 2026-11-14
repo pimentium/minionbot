@@ -36,6 +36,14 @@ SYSTEM_PROMPT = (
 )
 
 
+ASK_SYSTEM_PROMPT = (
+    "You are Gemini, answering inside a Telegram chat. Keep answers reasonably concise. You may use simple Markdown: "
+    "**bold**, *italic*, `code`, fenced code blocks, bullet lists and links; avoid tables and headings. "
+    "Answer in the language of the question."
+)
+CUT_OFF_NOTE = "\n\n[The answer was cut off at the model's length limit.]"
+
+
 class BadOutput(Exception):
     """The model answered, but not with a usable array (wrong JSON, wrong length) or ran out of output tokens."""
 
@@ -103,13 +111,13 @@ class GeminiClient:
             except httpx.TimeoutException as error:
                 delay, reason = self._Delay(attempt, None), "took too long to answer"
                 if delay is None:
-                    raise TranslationError("The translation service took too long to answer.") from error
+                    raise TranslationError("The Gemini service took too long to answer.") from error
                 LOGGER.info("Gemini %s; retrying in %ss", reason, delay)
                 await self.sleep(delay)
                 continue
             except httpx.HTTPError as error:
                 LOGGER.warning("Gemini request failed: %s", type(error).__name__)
-                raise TranslationError("The translation service is not reachable.") from error
+                raise TranslationError("The Gemini service is not reachable.") from error
             if response.status_code == 200:
                 try:
                     return response.json()
@@ -118,11 +126,11 @@ class GeminiClient:
             status, message, reasons = self._ErrorInfo(response)
             lowered = message.lower()
             if "API_KEY_INVALID" in reasons or "api key not valid" in lowered or response.status_code in (401, 403):
-                raise TranslationServiceError("The translation service refused the API key.")
+                raise TranslationServiceError("The Gemini service refused the API key.")
             if response.status_code == 404:
-                raise TranslationServiceError(f"The translation model '{self.model}' was not found.")
+                raise TranslationServiceError(f"The Gemini model '{self.model}' was not found.")
             if response.status_code == 429 and ("perday" in lowered.replace(" ", "") or "daily" in lowered):
-                raise TranslationError("The daily free quota of the translation service is used up.")
+                raise TranslationError("The daily free quota of the Gemini service is used up.")
             if response.status_code in (408, 429, 500, 502, 503, 504):
                 delay = self._Delay(attempt, response.headers.get("retry-after"))
                 if delay is not None:
@@ -130,13 +138,13 @@ class GeminiClient:
                     await self.sleep(delay)
                     continue
                 raise TranslationError(
-                    "The translation service is busy (free-tier limit); try again in a minute."
+                    "The Gemini service is busy (free-tier limit); try again in a minute."
                     if response.status_code == 429
-                    else "The translation service is unavailable right now."
+                    else "The Gemini service is unavailable right now."
                 )
             LOGGER.warning("Gemini answered HTTP %s %s: %s", response.status_code, status, message.replace(self.apiKey, "***")[:200])
-            raise TranslationError(f"The translation service rejected the request (HTTP {response.status_code}).")
-        raise TranslationError("The translation service is busy; try again in a minute.")
+            raise TranslationError(f"The Gemini service rejected the request (HTTP {response.status_code}).")
+        raise TranslationError("The Gemini service is busy; try again in a minute.")
 
     def _Delay(self, attempt: int, retryAfter: str | None) -> float | None:
         if attempt >= len(self.retryDelays):
@@ -154,20 +162,39 @@ class GeminiClient:
             "contents": [{"role": "user", "parts": [{"text": json.dumps(strings, ensure_ascii=False)}]}],
             "generationConfig": {"responseMimeType": "application/json"},
         }
-        data = await self._Post(body)
+        text, finish = self._Extract(await self._Post(body))
+        if finish == "MAX_TOKENS":
+            raise BadOutput("output too long")
+        return ParseStringArray(text)
+
+    @staticmethod
+    def _Extract(data: dict) -> tuple[str, str]:
+        """(text, finishReason) of an answer; raises TranslationError when Gemini declined to answer."""
         blocked = (data.get("promptFeedback") or {}).get("blockReason")
         if blocked:
-            raise TranslationError(f"Gemini declined to translate this page ({str(blocked).lower()}).")
+            raise TranslationError(f"Gemini declined to answer ({str(blocked).lower()}).")
         candidates = data.get("candidates") or []
         candidate = candidates[0] if candidates and isinstance(candidates[0], dict) else {}
         finish = str(candidate.get("finishReason", "STOP"))
-        if finish == "MAX_TOKENS":
-            raise BadOutput("output too long")
-        if finish not in ("STOP", ""):
-            raise TranslationError(f"Gemini declined to translate this page ({finish.lower()}).")
+        if finish not in ("STOP", "MAX_TOKENS", ""):
+            raise TranslationError(f"Gemini declined to answer ({finish.lower()}).")
         parts = (candidate.get("content") or {}).get("parts") or []
-        text = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
-        return ParseStringArray(text)
+        text = "".join(part.get("text", "") for part in parts if isinstance(part, dict) and not part.get("thought"))
+        return text, finish
+
+    async def Ask(self, prompt: str) -> str:
+        """The model's answer to a free-form prompt (Markdown). Raises TranslationError."""
+        body = {
+            "systemInstruction": {"parts": [{"text": ASK_SYSTEM_PROMPT}]},
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        }
+        try:
+            text, finish = self._Extract(await self._Post(body))
+        except BadOutput as error:
+            raise TranslationError("Gemini sent an answer I couldn't read.") from error
+        if not text.strip():
+            raise TranslationError("Gemini returned an empty answer.")
+        return text.strip() + (CUT_OFF_NOTE if finish == "MAX_TOKENS" else "")
 
     async def _Batch(self, batch: list[str], language: str) -> list[str]:
         try:

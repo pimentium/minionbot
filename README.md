@@ -37,6 +37,7 @@ All config can also be set via environment variables, so Docker works with `--en
 | `/social <link>` | user | download a post from Instagram, Facebook, Twitter/X or Threads; same result as sending the bare link; also works in groups |
 | `/url <link>` | user | read a web page in reader mode and send it as an Instant View article (see "Web pages"); also works in groups |
 | `/rus <link>`, `/eng <link>` | user | like `/url`, but the page is translated to Russian / English with Gemini first (see "Translation"); also work in groups |
+| `/gemini <prompt>` | user | ask Gemini: everything after the command is sent as the prompt, the answer comes back formatted for Telegram; also works in groups |
 | `/google <query>` | user | search Google: the AI overview (when Google shows one) and the top results, via SerpApi; also works in groups |
 | `/users list` | admin | list users with their roles |
 | `/users add <id\|@username> [user\|admin] [name]` | admin | add a user (role defaults to `user`) |
@@ -132,6 +133,24 @@ translation; if Google retires it, set another one). Without a key the commands 
   The key is sent in a request header, never in a URL, and is redacted from logs.
 - Machine translation can be wrong or awkward, especially for names, idioms and technical text. The original is one
   tap away in the source link.
+
+### Asking Gemini (`/gemini`)
+
+`/gemini <prompt>` (or `@BotName /gemini <prompt>`) sends **everything after the command** to the same Gemini model
+and key as the translation, and returns the answer. Line breaks in the prompt are kept. The prompt may be up to
+8,000 characters.
+
+- Gemini answers in Markdown, which Telegram would show as raw `**` and `#` symbols, so the answer is converted to
+  Telegram's formatting (bold, italics, code, code blocks, bullet lists, quotes, links; tables become monospaced
+  blocks). Everything from the model is escaped, only http(s)/mailto links are kept, and if Telegram rejects the
+  formatting the answer is resent as plain text. Long answers are split into several messages; a code block that is
+  cut in two is closed and reopened.
+- A short instruction is sent with every prompt: answer inside a Telegram chat, stay reasonably concise, answer in
+  the language of the question. There is **no memory**: each `/gemini` is a fresh, single question, and replies to the
+  bot's earlier answers are not used as context.
+- Everything said for `/rus` and `/eng` applies here too: the free-tier **privacy note** (Google may use what you
+  send, and human reviewers may read it), the unpublished free-tier limits, retries on rate limits, and owner
+  notifications for key or model problems. Anyone with the user role can spend your quota.
 
 ## Google search (`/google`)
 

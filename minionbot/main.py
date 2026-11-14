@@ -44,8 +44,8 @@ def ParseArgs(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--serpapi-key", help="SerpApi API key for /google (overrides SERPAPI_KEY)")
     parser.add_argument("--google-language", help="Google interface language, default en; AI overviews exist for English only (overrides GOOGLE_LANGUAGE)")
     parser.add_argument("--google-country", help="Google country code, e.g. us (overrides GOOGLE_COUNTRY)")
-    parser.add_argument("--gemini-key", help="Gemini API key for /rus and /eng translation (overrides GEMINI_API_KEY)")
-    parser.add_argument("--gemini-model", help="Gemini model for translation (overrides GEMINI_MODEL)")
+    parser.add_argument("--gemini-key", help="Gemini API key for /gemini and the /rus, /eng translation (overrides GEMINI_API_KEY)")
+    parser.add_argument("--gemini-model", help="Gemini model for /gemini and translation (overrides GEMINI_MODEL)")
     parser.add_argument("--telegraph-token", help="Telegraph access token for /url articles; created automatically if omitted (overrides TELEGRAPH_TOKEN)")
     return parser.parse_args(argv)
 
@@ -110,14 +110,15 @@ def Main(argv: Sequence[str] | None = None) -> None:
         service = SocialService(downloaders, MediaFetcher())
         restartInfo = f"restart #{restartCount} after: {lastError}" if restartCount else startReason
         control = BotControl()
+        gemini = GeminiClient(config.geminiKey, config.geminiModel) if config.geminiKey else None
         webService = WebService(
             PageFetcher(),
             TelegraphClient(Path(config.usersFile).parent / "telegraph.json", config.telegraphToken),
             [Wayback()],
-            GeminiClient(config.geminiKey, config.geminiModel) if config.geminiKey else None,
+            gemini,
         )
         searchClient = SerpApiClient(config.serpApiKey, config.googleLanguage, config.googleCountry) if config.serpApiKey else None
-        application = BuildApplication(config, store, BuildRegistry(), service, restartInfo, control, webService, searchClient)
+        application = BuildApplication(config, store, BuildRegistry(), service, restartInfo, control, webService, searchClient, gemini)
         asyncio.set_event_loop(asyncio.new_event_loop())
         application.run_polling()
         finalAction["requested"] = control.requested

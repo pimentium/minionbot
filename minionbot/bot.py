@@ -9,10 +9,11 @@ from pathlib import Path
 
 from telegram import InputMediaPhoto, InputMediaVideo, LinkPreviewOptions, Message, MessageEntity, Update
 from telegram.constants import ChatAction, ChatType, ParseMode
-from telegram.error import Conflict, NetworkError
+from telegram.error import BadRequest, Conflict, NetworkError
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-from minionbot.builtin import ENG_USAGE, GOOGLE_USAGE, RUS_USAGE, SOCIAL_USAGE, URL_USAGE
+from minionbot.ai.markdown import SplitMarkdown, ToHtml
+from minionbot.builtin import ENG_USAGE, GEMINI_USAGE, GOOGLE_USAGE, RUS_USAGE, SOCIAL_USAGE, URL_USAGE
 from minionbot.commands import UNKNOWN_COMMAND_TEXT, CommandRegistry
 from minionbot.config import Config
 from minionbot.control import BotControl
@@ -26,7 +27,8 @@ from minionbot.social.links import FindLinks
 from minionbot.social.models import PHOTO, DownloadError, LocalMedia, Post, UnexpectedDownloadError
 from minionbot.social.service import SocialService
 from minionbot.social.triggers import IGNORE, NO_LINKS, Decide, Incoming
-from minionbot.web.errors import TranslationServiceError, UnexpectedWebError, WebError
+from minionbot.translate.gemini import GeminiClient
+from minionbot.web.errors import TranslationError, TranslationServiceError, UnexpectedWebError, WebError
 from minionbot.web.service import WebResult, WebService
 from minionbot.web.urls import FindWebUrls
 from minionbot.users import SOCIAL_LINKS_MIN_ROLE, UserStore
@@ -94,8 +96,8 @@ def ParseMentionCommand(text: str, botUsername: str) -> tuple[str, str] | None:
 class ArgsContext:
     """The real context, but with the arguments of the command that followed the mention."""
 
-    def __init__(self, context, args: list[str]):
-        self.wrapped, self.args = context, args
+    def __init__(self, context, args: list[str], rawArgs: str | None = None):
+        self.wrapped, self.args, self.rawArgs = context, args, rawArgs
 
     def __getattr__(self, name: str):
         return getattr(self.wrapped, name)
@@ -332,6 +334,65 @@ def MakeGoogleCommandCallback(registry: CommandRegistry, store: UserStore, searc
     return Callback
 
 
+GEMINI_MAX_PROMPT_CHARS = 8000
+COMMAND_PREFIX = re.compile(r"^\s*/\w+(?:@\w+)?[ \t]*\n?")
+
+
+def PromptText(message: Message, context) -> str:
+    """Everything after the command, exactly as typed (line breaks kept)."""
+    raw = getattr(context, "rawArgs", None)  # set (by ArgsContext) when the command followed a mention
+    if isinstance(raw, str):
+        return raw.strip()
+    return COMMAND_PREFIX.sub("", message.text or message.caption or "", count=1).strip()
+
+
+async def ReplyWithMarkdown(message: Message, markdown: str) -> None:
+    """Gemini's Markdown as Telegram HTML; if Telegram refuses the formatting, as plain text."""
+    for chunk in SplitMarkdown(markdown):
+        try:
+            await message.reply_text(ToHtml(chunk), parse_mode=ParseMode.HTML, link_preview_options=NO_PREVIEW)
+        except BadRequest as error:
+            LOGGER.info("Telegram refused the HTML formatting (%s); sending plain text", error)
+            await message.reply_text(chunk, link_preview_options=NO_PREVIEW)
+
+
+def MakeGeminiCommandCallback(registry: CommandRegistry, store: UserStore, gemini: GeminiClient | None, notifier: Notifier | None = None):
+    """/gemini <prompt>: the text after the command goes to Gemini as it is; its answer comes back."""
+
+    async def Callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message, sender, chat = update.effective_message, update.effective_user, update.effective_chat
+        if message is None or sender is None or chat is None:
+            return
+        _, denial = registry.Authorize("gemini", sender.id, sender.username, store)
+        if denial is not None:
+            await message.reply_text(denial)
+            return
+        prompt = PromptText(message, context)
+        if not prompt:
+            await message.reply_text(GEMINI_USAGE)
+            return
+        if len(prompt) > GEMINI_MAX_PROMPT_CHARS:
+            await message.reply_text(f"That prompt is too long (at most {GEMINI_MAX_PROMPT_CHARS} characters).")
+            return
+        if gemini is None:
+            await message.reply_text("Gemini is not configured (the owner needs to set a Gemini API key).")
+            return
+        await chat.send_action(ChatAction.TYPING)
+        try:
+            await ReplyWithMarkdown(message, await gemini.Ask(prompt))
+        except TranslationError as error:
+            await message.reply_text(str(error))
+            if isinstance(error, TranslationServiceError) and notifier:
+                await notifier.ReportFailure("Gemini (/gemini)", error)
+        except Exception as error:
+            LOGGER.exception("Failed to answer /gemini")
+            await message.reply_text("Sorry, something went wrong while asking Gemini.")
+            if notifier:
+                await notifier.ReportFailure("Gemini (/gemini)", error)
+
+    return Callback
+
+
 def MakeMessageCallback(
     store: UserStore,
     service: SocialService,
@@ -349,7 +410,7 @@ def MakeMessageCallback(
         command = ParseMentionCommand(incoming.text, context.bot.username or "") if mentionCommands else None
         if command and command[0] in mentionCommands:
             LOGGER.info("Message in %s chat %s from user %s: mention command /%s", chat.type, chat.id, sender.id, command[0])
-            await mentionCommands[command[0]](update, ArgsContext(context, command[1].split()))
+            await mentionCommands[command[0]](update, ArgsContext(context, command[1].split(), command[1]))
             return
         replied = ReplySource(message)
         decision = Decide(chat.type == ChatType.PRIVATE, context.bot.username or "", incoming, replied)
@@ -443,6 +504,7 @@ def BuildApplication(
     control: BotControl | None = None,
     webService: WebService | None = None,
     searchClient: SerpApiClient | None = None,
+    gemini: GeminiClient | None = None,
 ) -> Application:
     builder = ApplicationBuilder().token(config.botToken).concurrent_updates(True).read_timeout(30).write_timeout(UPLOAD_TIMEOUT)
     application = builder.build()
@@ -458,6 +520,7 @@ def BuildApplication(
         "rus": MakeUrlCommandCallback(registry, store, webService, notifier, "rus", "ru", RUS_USAGE),
         "eng": MakeUrlCommandCallback(registry, store, webService, notifier, "eng", "en", ENG_USAGE),
         "google": MakeGoogleCommandCallback(registry, store, searchClient, notifier),
+        "gemini": MakeGeminiCommandCallback(registry, store, gemini, notifier),
     }
     for name, command in registry.commands.items():
         callback = chatCommands[name] if command.needsChat else MakeCommandCallback(registry, store, name, notifier, control)

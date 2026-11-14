@@ -25,6 +25,9 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
 - `minionbot/social/`: `links.py` (URL classification), `triggers.py` (when to react / which links),
   `instagram.py` (instagrapi, sessionid cookie), `gallerydl.py` (Twitter/Facebook + Twitter thread merge), `threads.py`
   (custom page reader), `fetch.py` (media download + size limits), `videoinfo.py` (pure-Python MP4 width/height/duration), `format.py`, `service.py`, `factory.py`.
+- `minionbot/ai/markdown.py`: Gemini Markdown -> Telegram HTML (`ToHtml`, balance-checked, escapes everything) and
+  `SplitMarkdown` (fence-aware chunks). `/gemini` = `GeminiClient.Ask` + `ReplyWithMarkdown` in `bot.py`; one
+  `GeminiClient` instance is shared by translation and `/gemini` (created in `main.RunOnce`).
 - `minionbot/translate/`: `/rus` `/eng`. `gemini.py` (client: header key, JSON array in/out, strict length check,
   batch halving, retries), `articles.py` (block-wise translation that keeps inline markup; only the source's own
   hrefs survive), `language.py` (skip pages already in the target language).
@@ -79,6 +82,9 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
   validation of the answer. Invalid key is HTTP 400 `API_KEY_INVALID` (not 401). Free tier: Google may use the data
   to improve products (owner knows/chose free tier). Translation key/model errors (`TranslationServiceError`)
   notify the owner. Page text is untrusted: prompt says translate only, output is validated, hrefs are whitelisted.
+- `/gemini <prompt>`: raw text after the command (`PromptText`: `rawArgs` after a mention, else the message text minus
+  the command word) goes to Gemini with a short chat system instruction; single-turn, no memory. HTML first, plain
+  text fallback on `BadRequest`. Gemini error wording says "Gemini service" (shared with translation).
 - `/google`: SerpApi chosen by the owner (scraping Google is blocked and against its terms; AI overview is not in the
   HTML scripts receive). The key is in the URL query, so httpx errors/URLs must never be logged or shown: the client
   maps errors to its own messages and scrubs the key; key is in the redaction secrets. Key/quota errors
@@ -116,7 +122,7 @@ with a probe script, as script and as `-m`). Verified live by the owner: Instagr
 Verified live by the agent (read-only, anonymous): Gemini invalid-key answer (HTTP 400 API_KEY_INVALID) and a real
 23k-char page through the translation round trip with a pretend translator (links/headings/lists intact); SerpApi error format with an invalid key (HTTP 401 + JSON error); /url fetch+reader on gnu.org, python.org, example.com; SSRF
 blocks incl. localtest.me; Wayback lookup; Facebook share post and a Threads 8-part text thread.
-NOT verified: any real Gemini translation (no key during development; prompt quality, the free-tier limits and
+NOT verified: any real Gemini call (translation, /gemini) (no key during development; prompt quality, the free-tier limits and
 the default model name rest on Google's docs), a real /google search (no SerpApi key during development; the AI overview and page_token flows rely on
 SerpApi's documentation, the second response format is not documented), publishing to Telegraph and Instant View in real Telegram (deliberately not published during
 development), Threads posts with images/video, Facebook video posts, the video aspect-ratio fix in real Telegram. The MP4 reader was checked
