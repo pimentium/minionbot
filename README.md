@@ -33,7 +33,7 @@ All config can also be set via environment variables, so Docker works with `--en
 | Command | Lowest role | What |
 |---|---|---|
 | `/whoami` | unknown | show your Telegram ID and username; users also see their role and permissions |
-| `/start`, `/help` | user | list the commands available to your role |
+| `/start`, `/help` | user | list the commands available to your role, in sections by role (least restricted first). Each command is on its own line with its description quoted below it: a one-line summary, then bullet points for the special cases (replies, links, text, media, groups). Tap a command to copy it |
 | `/social <link>` | user | download a post from Instagram, Facebook, Twitter/X or Threads; same result as sending the bare link; also works in groups |
 | `/url <link>` | user | read a web page in reader mode and send it as an Instant View article (see "Web pages"); also works in groups |
 | `/rus <link\|text>`, `/eng <link\|text>` | user | like `/url`, but the page is translated to Russian / English with Gemini first; without a link they translate the given text, or the message you reply to (see "Translation"); also work in groups |

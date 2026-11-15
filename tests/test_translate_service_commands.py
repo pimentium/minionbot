@@ -1,5 +1,7 @@
 """/rus and /eng: the /url pipeline with a translation step."""
 
+import html
+
 import json
 from unittest.mock import MagicMock
 
@@ -183,8 +185,8 @@ def test_commands_are_registered_listed_and_open_to_groups(registry, store):
     app = BuildApplication(Config("123:FAKE", "1", "x"), store, registry, FakeService(), webService=FakeWeb())
     names = {name for h in app.handlers[0] if isinstance(h, CommandHandler) for name in h.commands}
     assert {"rus", "eng", "url"} <= names
-    help = registry.Dispatch("help", [], OWNER_ID, None, store)
-    assert "/rus <link|text>" in help and "/eng <link|text>" in help and "Russian" in help and "English" in help
+    help = html.unescape(registry.Dispatch("help", [], OWNER_ID, None, store))
+    assert "/rus <link or text>" in help and "/eng <link or text>" in help and "Russian" in help and "English" in help
     assert all(registry.commands[name].inGroups and registry.commands[name].needsChat for name in ("rus", "eng"))
 
 

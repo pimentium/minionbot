@@ -1,5 +1,7 @@
 """/gemini <prompt>: everything after the command goes to Gemini, the answer comes back formatted for Telegram."""
 
+import html
+
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -167,7 +169,7 @@ async def test_build_application_wires_gemini_for_commands_and_mentions(registry
     gemini = FakeGemini()
     app = BuildApplication(Config("123:FAKE", "1", "x"), store, registry, FakeService(), gemini=gemini)
     assert "gemini" in {name for h in app.handlers[0] if isinstance(h, CommandHandler) for name in h.commands}
-    assert "/gemini <prompt>" in registry.Dispatch("help", [], OWNER_ID, None, store)
+    assert "/gemini <prompt>" in html.unescape(registry.Dispatch("help", [], OWNER_ID, None, store))
     message = FakeMessage(f"@{REAL_BOT} /gemini hello")
     context = FakeContext()
     context.bot.username = REAL_BOT

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import logging
 import re
 import tempfile
@@ -50,6 +51,34 @@ NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 UPLOAD_TIMEOUT = 180
 
 
+HTML_TAG = re.compile(r"<[^>]*>")
+
+
+def SplitHtmlBlocks(text: str, limit: int = 3900) -> list[str]:
+    """Split HTML text between blank lines (never inside a tag pair) into messages of at most `limit` characters."""
+    messages: list[str] = []
+    current = ""
+    for block in text.split("\n\n"):
+        if current and len(current) + 2 + len(block) > limit:
+            messages.append(current)
+            current = block
+        else:
+            current = f"{current}\n\n{block}" if current else block
+    if current:
+        messages.append(current)
+    return messages
+
+
+async def ReplyWithHtml(message: Message, text: str) -> None:
+    """A reply written in Telegram HTML; if Telegram refuses the markup, the same text without it."""
+    for part in SplitHtmlBlocks(text):
+        try:
+            await message.reply_text(part, parse_mode=ParseMode.HTML, link_preview_options=NO_PREVIEW)
+        except BadRequest as error:
+            LOGGER.info("Telegram refused the HTML (%s); sending plain text", error)
+            await message.reply_text(html.unescape(HTML_TAG.sub("", part)), link_preview_options=NO_PREVIEW)
+
+
 def MakeCommandCallback(
     registry: CommandRegistry, store: UserStore, name: str, notifier: Notifier | None = None, control: BotControl | None = None
 ):
@@ -59,7 +88,10 @@ def MakeCommandCallback(
             return
         errors: list[Exception] = []
         reply = registry.Dispatch(name, list(context.args or []), user.id, user.username, store, onError=errors.append, control=control)
-        await message.reply_text(reply)
+        if registry.commands[name].html:
+            await ReplyWithHtml(message, reply)
+        else:
+            await message.reply_text(reply)
         if control is not None and control.requested:
             LOGGER.warning("Stopping the bot on the owner's request: %s", control.requested)
             context.application.stop_running()

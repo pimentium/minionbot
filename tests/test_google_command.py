@@ -1,5 +1,7 @@
 """Stage 3: /google."""
 
+import html
+
 from unittest.mock import AsyncMock
 
 import pytest
@@ -143,4 +145,4 @@ async def test_updates_without_a_message_are_ignored(registry, store):
 def test_google_is_registered_for_groups_and_listed(registry, store):
     app = BuildApplication(Config("123:FAKE", "1", "x"), store, registry, FakeService(), searchClient=FakeSearch())
     assert "google" in {name for h in app.handlers[0] if isinstance(h, CommandHandler) for name in h.commands}
-    assert "/google <query>" in registry.Dispatch("help", [], OWNER_ID, None, store)
+    assert "/google <query>" in html.unescape(registry.Dispatch("help", [], OWNER_ID, None, store))

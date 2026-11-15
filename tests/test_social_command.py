@@ -1,5 +1,7 @@
 """Stage 1: the explicit /social command, same pipeline as the implicit link handling."""
 
+import html
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -117,4 +119,4 @@ def test_social_is_registered_for_private_and_group_chats_and_in_help(registry, 
     assert "social" in handlers and "users" in handlers
     # /social accepts group chats, /users does not
     assert repr(handlers["users"].filters) != repr(handlers["social"].filters)
-    assert "/social <link>" in registry.Dispatch("help", [], OWNER_ID, None, store)
+    assert "/social <link>" in html.unescape(registry.Dispatch("help", [], OWNER_ID, None, store))

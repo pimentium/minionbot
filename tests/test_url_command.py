@@ -1,5 +1,7 @@
 """Stage 2: /url and the implicit handling of ordinary web links."""
 
+import html
+
 from unittest.mock import AsyncMock
 
 import pytest
@@ -163,7 +165,7 @@ async def test_not_configured(registry, store):
 def test_url_is_registered_for_groups_and_listed(registry, store):
     app = BuildApplication(Config("123:FAKE", "1", "x"), store, registry, FakeService(), webService=FakeWeb())
     assert "url" in {name for h in app.handlers[0] if isinstance(h, CommandHandler) for name in h.commands}
-    assert "/url <link>" in registry.Dispatch("help", [], OWNER_ID, None, store)
+    assert "/url <link>" in html.unescape(registry.Dispatch("help", [], OWNER_ID, None, store))
 
 
 # ---- implicit handling of ordinary links -----------------------------------------------------------------

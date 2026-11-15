@@ -59,6 +59,10 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
   dispatched to the same callbacks (`ArgsContext` supplies `args`); only commands with `needsChat and inGroups` are
   reachable this way, never private-only ones. Link-taking commands fall back to the replied-to message
   (`CommandSources`). Without this a mention + `/rus` silently became plain `/url` (found by the owner).
+- `/help` is Telegram HTML (`Command.html=True`; the adapter's `ReplyWithHtml` splits between entries at <=3900 chars and
+  falls back to tag-free text on `BadRequest`). `Command.help` holds `HelpEntry(syntax, summary, details)`; sections by
+  `minRole`, least restricted first (`ROLE_TITLES`). New commands must describe their cases (reply, link, text, media) in
+  `details`; everything is escaped.
 - New commands: write `Handler(context) -> str`, register in `BuildRegistry` with help lines and `minRole`.
 
 - Link cleaning (`links.py`) is an ALLOWLIST: keep the path (or for old Facebook forms only v / fbid /

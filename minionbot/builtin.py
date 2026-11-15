@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from minionbot.commands import Command, CommandContext, CommandRegistry
+import html
+
+from minionbot.commands import Command, CommandContext, CommandRegistry, HelpEntry
 from minionbot.control import RESTART, SHUTDOWN
 from minionbot.users import ASSIGNABLE_ROLES, Role, ParseRole, ParseUserRef, UserError
 
@@ -16,12 +18,31 @@ USERS_USAGE = (
 )
 
 
+ROLE_TITLES = {
+    Role.OWNER: "Owner commands",
+    Role.ADMIN: "Admin commands",
+    Role.USER: "User commands",
+    Role.UNKNOWN: "Everyone",
+}
+
+
+def FormatHelpEntry(entry: HelpEntry) -> str:
+    """Command line (monospace), then its description indented as a quote: summary first, details after it."""
+    lines = [html.escape(entry.summary, quote=False)] + [f"• {html.escape(detail, quote=False)}" for detail in entry.details]
+    return f"<code>{html.escape(entry.syntax, quote=False)}</code>\n<blockquote>" + "\n".join(lines) + "</blockquote>"
+
+
 def HelpCommand(context: CommandContext) -> str:
-    lines = ["Available commands:"]
-    for command in context.registry.Available(context.user):
-        for syntax, description in command.help:
-            lines.append(f"{syntax} - {description}")
-    return "\n".join(lines)
+    """Telegram HTML. Sections by role, the least restricted first; entries are separated by blank lines (the
+    adapter splits long help there, a section title always stays attached to its first entry)."""
+    available = context.registry.Available(context.user)
+    blocks: list[str] = []
+    for role in sorted({command.minRole for command in available}):
+        entries = [entry for command in available if command.minRole == role for entry in command.help]
+        for index, entry in enumerate(entries):
+            title = f"<b>{ROLE_TITLES[role]}</b>\n" if index == 0 else ""
+            blocks.append(title + FormatHelpEntry(entry))
+    return "Available commands. Tap a command to copy it; <i>&lt;...&gt;</i> is what you fill in.\n\n" + "\n\n".join(blocks)
 
 
 def WhoamiCommand(context: CommandContext) -> str:
@@ -152,14 +173,53 @@ def ShutdownCommand(context: CommandContext) -> str:
 def BuildRegistry() -> CommandRegistry:
     """Commands and the lowest role that may use each. Roles include all lower ones."""
     registry = CommandRegistry()
-    registry.Register(Command("start", HelpCommand, minRole=Role.USER))
-    registry.Register(Command("help", HelpCommand, help=(("/help", "show commands available to you"),), minRole=Role.USER))
-    registry.Register(Command("whoami", WhoamiCommand, help=(("/whoami", "show your Telegram ID, role and permissions"),), minRole=Role.UNKNOWN))
+    registry.Register(Command("start", HelpCommand, minRole=Role.USER, html=True))
+    registry.Register(
+        Command(
+            "help",
+            HelpCommand,
+            help=(
+                HelpEntry(
+                    "/help",
+                    "Show the commands you may use.",
+                    ("Commands that need a higher role than yours are hidden.", "/start shows the same list."),
+                ),
+            ),
+            minRole=Role.USER,
+            html=True,
+        )
+    )
+    registry.Register(
+        Command(
+            "whoami",
+            WhoamiCommand,
+            help=(
+                HelpEntry(
+                    "/whoami",
+                    "Show your Telegram ID, role and permissions.",
+                    ("Works even if I don't know you yet: send the ID to my owner to get access.",),
+                ),
+            ),
+            minRole=Role.UNKNOWN,
+        )
+    )
     registry.Register(
         Command(
             "social",
             SocialCommand,
-            help=(("/social <link>", "download a post from Instagram, Facebook, Twitter/X or Threads"),),
+            help=(
+                HelpEntry(
+                    "/social <link>",
+                    "Download a post from Instagram, Facebook, Twitter/X or Threads.",
+                    (
+                        "Replies with the post's photos, videos, text and author. Twitter and Threads thread parts come back as one reply.",
+                        "Without a link in the command, the message you reply to is used.",
+                        "Links sent in a private chat, or together with my @name, are handled without any command.",
+                        "Files over Telegram's size limit are skipped.",
+                        "Works in groups, also as '@name /social <link>'.",
+                    ),
+                ),
+            ),
             minRole=Role.USER,
             inGroups=True,
             needsChat=True,
@@ -169,7 +229,19 @@ def BuildRegistry() -> CommandRegistry:
         Command(
             "url",
             UrlCommand,
-            help=(("/url <link>", "read a web page in reader mode (no ads or paywall clutter) as an Instant View article"),),
+            help=(
+                HelpEntry(
+                    "/url <link>",
+                    "Read a web page in reader mode as an Instant View article.",
+                    (
+                        "Strips ads and clutter, publishes the text on Telegraph and replies with the link.",
+                        "Paywalled or blocked pages fall back to an Internet Archive copy when one exists.",
+                        "Without a link in the command, the message you reply to is used.",
+                        "Any web link sent in a private chat, or together with my @name, is treated like /url.",
+                        "Social network links are not read here: use /social.",
+                    ),
+                ),
+            ),
             minRole=Role.USER,
             inGroups=True,
             needsChat=True,
@@ -180,7 +252,19 @@ def BuildRegistry() -> CommandRegistry:
             Command(
                 name,
                 handler,
-                help=((f"/{name} <link|text>", f"like /url, but the page is translated to {language} (Gemini) first; without a link translates the given text or the message you reply to"),),
+                help=(
+                    HelpEntry(
+                        f"/{name} <link or text>",
+                        f"Translate a web page or a text to {language} (Gemini).",
+                        (
+                            f"With a link: like /url, but the article is translated to {language} before it is published.",
+                            "With text after the command: translates that text and replies with it.",
+                            "As a reply, without a link or text of your own: translates the message you replied to (only the part you selected, if you used Telegram's quote).",
+                            f"If a link or text is already in {language}, nothing is translated.",
+                            "Works in groups, also as '@name /" + name + " ...'.",
+                        ),
+                    ),
+                ),
                 minRole=Role.USER,
                 inGroups=True,
                 needsChat=True,
@@ -190,7 +274,18 @@ def BuildRegistry() -> CommandRegistry:
         Command(
             "gemini",
             GeminiCommand,
-            help=(("/gemini <prompt>", "ask Gemini anything: the text after the command is sent as the prompt"),),
+            help=(
+                HelpEntry(
+                    "/gemini <prompt>",
+                    "Ask Gemini anything.",
+                    (
+                        "Everything after the command is the prompt, line breaks included (up to 8,000 characters).",
+                        "As a reply: the text of the message you replied to (or your selected quote) is added at the end of the prompt.",
+                        "As a reply to a picture, video, GIF or video note (up to 15 MB): the file is sent too. A bare reply to a picture asks what is in it.",
+                        "No memory: every /gemini is a fresh question.",
+                    ),
+                ),
+            ),
             minRole=Role.USER,
             inGroups=True,
             needsChat=True,
@@ -200,7 +295,16 @@ def BuildRegistry() -> CommandRegistry:
         Command(
             "google",
             GoogleCommand,
-            help=(("/google <query>", "search Google: AI overview (when Google shows one) and the top results"),),
+            help=(
+                HelpEntry(
+                    "/google <query>",
+                    "Search Google.",
+                    (
+                        "Replies with Google's AI overview (only when Google shows one for the query), then the top results with a snippet each.",
+                        "Only the text after the command is searched; a replied-to message is not used.",
+                    ),
+                ),
+            ),
             minRole=Role.USER,
             inGroups=True,
             needsChat=True,
@@ -211,14 +315,43 @@ def BuildRegistry() -> CommandRegistry:
             "users",
             UsersCommand,
             help=(
-                ("/users list", "list configured users"),
-                (f"/users add <id|@username> [{ROLE_NAMES}] [name]", "add a user (role defaults to user)"),
-                (f"/users update <id|@username|name> <{ROLE_NAMES}>", "change a user's role"),
-                ("/users remove <id|@username|name>", "remove a user"),
+                HelpEntry("/users list", "List the configured users with their roles."),
+                HelpEntry(
+                    f"/users add <id|@username> [{ROLE_NAMES}] [name]",
+                    "Add a user.",
+                    (
+                        "The role defaults to user.",
+                        "A user added by @username is linked to their Telegram ID on their first message.",
+                    ),
+                ),
+                HelpEntry(
+                    f"/users update <id|@username|name> <{ROLE_NAMES}>",
+                    "Change a user's role.",
+                    ("You cannot change your own role or the owner's.",),
+                ),
+                HelpEntry(
+                    "/users remove <id|@username|name>",
+                    "Remove a user.",
+                    ("You cannot remove yourself or the owner.",),
+                ),
             ),
             minRole=Role.ADMIN,
         )
     )
-    registry.Register(Command("restart", RestartCommand, help=(("/restart", "restart the bot"),), minRole=Role.OWNER))
-    registry.Register(Command("shutdown", ShutdownCommand, help=(("/shutdown", "stop the bot"),), minRole=Role.OWNER))
+    registry.Register(
+        Command(
+            "restart",
+            RestartCommand,
+            help=(HelpEntry("/restart", "Restart the bot.", ("Reloads the code and the .env file; the process keeps its PID.",)),),
+            minRole=Role.OWNER,
+        )
+    )
+    registry.Register(
+        Command(
+            "shutdown",
+            ShutdownCommand,
+            help=(HelpEntry("/shutdown", "Stop the bot.", ("It stays off until it is started again on its host.",)),),
+            minRole=Role.OWNER,
+        )
+    )
     return registry

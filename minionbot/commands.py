@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, NamedTuple
 
 from minionbot.users import SOCIAL_LINKS_MIN_ROLE, Role, User, UserError, UserStore
 
@@ -28,23 +28,33 @@ class CommandContext:
 CommandFunction = Callable[[CommandContext], str]
 
 
+class HelpEntry(NamedTuple):
+    """One /help item: the syntax, a one-line summary, and details (one string per case: replies, links, media...)."""
+
+    syntax: str
+    summary: str
+    details: tuple[str, ...] = ()
+
+
 @dataclass(frozen=True)
 class Command:
     """A bot command.
 
     minRole: the lowest role allowed to run it (roles include everything below them).
-    help: (syntax, description) lines shown by /help; empty = hidden.
+    help: HelpEntry items shown by /help; empty = hidden.
     inGroups: also available in group chats (default: private chats only).
+    html: the reply is Telegram HTML (the adapter sends it with parse_mode=HTML).
     needsChat: implemented in the Telegram adapter because it needs async chat I/O (downloads, uploads);
         the sync handler is then only a usage fallback.
     """
 
     name: str
     handler: CommandFunction
-    help: tuple[tuple[str, str], ...] = ()
+    help: tuple[HelpEntry, ...] = ()
     minRole: Role = Role.USER
     inGroups: bool = False
     needsChat: bool = False
+    html: bool = False
 
 
 class CommandRegistry:
