@@ -65,3 +65,20 @@ async def test_errors_use_the_same_handling_as_translation():
         await Client(lambda request: busy).Ask("q")
     with pytest.raises(TranslationServiceError, match="'gemini-x' was not found"):
         await Client(lambda request: httpx.Response(404, json={"error": {"message": "nope"}}), model="gemini-x").Ask("q")
+
+
+async def test_media_goes_first_as_inline_base64_then_the_text():
+    import base64
+
+    seen = {}
+
+    def Handler(request):
+        seen["body"] = json.loads(request.content)
+        return Answer("a cat")
+
+    assert await Client(Handler).Ask("what is it?", [("image/jpeg", b"\xff\xd8data"), ("video/mp4", b"vid")]) == "a cat"
+    assert seen["body"]["contents"] == [{"role": "user", "parts": [
+        {"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(b"\xff\xd8data").decode()}},
+        {"inlineData": {"mimeType": "video/mp4", "data": base64.b64encode(b"vid").decode()}},
+        {"text": "what is it?"},
+    ]}]

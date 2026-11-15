@@ -7,10 +7,11 @@ and validated strictly: the answer must be an array of strings with exactly as m
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import re
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Sequence
 
 import httpx
 
@@ -39,7 +40,8 @@ SYSTEM_PROMPT = (
 ASK_SYSTEM_PROMPT = (
     "You are Gemini, answering inside a Telegram chat. Keep answers reasonably concise. You may use simple Markdown: "
     "**bold**, *italic*, `code`, fenced code blocks, bullet lists and links; avoid tables and headings. "
-    "Answer in the language of the question."
+    "Answer in the language of the question. The message may end with a quoted message the user is replying to, and "
+    "may come with pictures or videos from it: treat them as the subject of the question."
 )
 CUT_OFF_NOTE = "\n\n[The answer was cut off at the model's length limit.]"
 
@@ -182,11 +184,14 @@ class GeminiClient:
         text = "".join(part.get("text", "") for part in parts if isinstance(part, dict) and not part.get("thought"))
         return text, finish
 
-    async def Ask(self, prompt: str) -> str:
-        """The model's answer to a free-form prompt (Markdown). Raises TranslationError."""
+    async def Ask(self, prompt: str, media: Sequence[tuple[str, bytes]] = ()) -> str:
+        """The model's answer to a free-form prompt (Markdown), optionally about pictures/videos given as
+        (mime type, bytes) pairs, sent inline before the text. Raises TranslationError."""
+        parts = [{"inlineData": {"mimeType": mime, "data": base64.b64encode(data).decode("ascii")}} for mime, data in media]
+        parts.append({"text": prompt})
         body = {
             "systemInstruction": {"parts": [{"text": ASK_SYSTEM_PROMPT}]},
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "contents": [{"role": "user", "parts": parts}],
         }
         try:
             text, finish = self._Extract(await self._Post(body))

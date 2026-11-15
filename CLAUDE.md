@@ -84,7 +84,10 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
   notify the owner. Page text is untrusted: prompt says translate only, output is validated, hrefs are whitelisted.
 - `/gemini <prompt>`: raw text after the command (`PromptText`: `rawArgs` after a mention, else the message text minus
   the command word) goes to Gemini with a short chat system instruction; single-turn, no memory. HTML first, plain
-  text fallback on `BadRequest`. Gemini error wording says "Gemini service" (shared with translation).
+  text fallback on `BadRequest`. As a reply it also sends the replied-to text (Telegram quote if selected, else text/
+  caption; appended at the END of the prompt, capped at 8000 chars) and its photo/video/animation/video_note/image
+  document inline (`GeminiClient.Ask(prompt, media)`, one file, 15 MB cap; media refused with a message, never silently
+  dropped). Gemini error wording says "Gemini service" (shared with translation).
 - `/google`: SerpApi chosen by the owner (scraping Google is blocked and against its terms; AI overview is not in the
   HTML scripts receive). The key is in the URL query, so httpx errors/URLs must never be logged or shown: the client
   maps errors to its own messages and scrubs the key; key is in the redaction secrets. Key/quota errors
@@ -122,7 +125,7 @@ with a probe script, as script and as `-m`). Verified live by the owner: Instagr
 Verified live by the agent (read-only, anonymous): Gemini invalid-key answer (HTTP 400 API_KEY_INVALID) and a real
 23k-char page through the translation round trip with a pretend translator (links/headings/lists intact); SerpApi error format with an invalid key (HTTP 401 + JSON error); /url fetch+reader on gnu.org, python.org, example.com; SSRF
 blocks incl. localtest.me; Wayback lookup; Facebook share post and a Threads 8-part text thread.
-NOT verified: any real Gemini call (translation, /gemini) (no key during development; prompt quality, the free-tier limits and
+NOT verified: any real Gemini call (translation, /gemini incl. reply text/media, whose inlineData request shape follows Google's docs) (no key during development; prompt quality, the free-tier limits and
 the default model name rest on Google's docs), a real /google search (no SerpApi key during development; the AI overview and page_token flows rely on
 SerpApi's documentation, the second response format is not documented), publishing to Telegraph and Instant View in real Telegram (deliberately not published during
 development), Threads posts with images/video, Facebook video posts, the video aspect-ratio fix in real Telegram. The MP4 reader was checked

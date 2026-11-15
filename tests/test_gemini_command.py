@@ -1,10 +1,10 @@
 """/gemini <prompt>: everything after the command goes to Gemini, the answer comes back formatted for Telegram."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telegram.constants import ChatAction, ChatType, ParseMode
-from telegram.error import BadRequest
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import CommandHandler
 
 from minionbot.bot import (
@@ -27,17 +27,20 @@ REAL_BOT = "PimentiumMinionBot"
 
 class FakeGemini:
     def __init__(self, answer="Hello **world**", error=None):
-        self.answer, self.error, self.prompts = answer, error, []
+        self.answer, self.error, self.prompts, self.media = answer, error, [], []
 
-    async def Ask(self, prompt):
+    async def Ask(self, prompt, media=()):
         self.prompts.append(prompt)
+        self.media.append(list(media))
         if self.error:
             raise self.error
         return self.answer
 
 
-async def Run(registry, store, text, gemini, userId=OWNER_ID, chatType=ChatType.PRIVATE, notifier=None):
-    message = FakeMessage(text)
+async def Run(registry, store, text, gemini, userId=OWNER_ID, chatType=ChatType.PRIVATE, notifier=None, replyTo=None, quote=None):
+    message = FakeMessage(text, replyTo=replyTo)
+    if quote is not None:
+        message.quote = MagicMock(text=quote)
     update = FakeUpdate(message, userId, chatType=chatType)
     await MakeGeminiCommandCallback(registry, store, gemini, notifier)(update, FakeContext([]))
     return message, update
@@ -170,3 +173,127 @@ async def test_build_application_wires_gemini_for_commands_and_mentions(registry
     context.bot.username = REAL_BOT
     await app.handlers[0][-1].callback(FakeUpdate(message, chatType=ChatType.GROUP), context)
     assert gemini.prompts == ["hello"]
+
+
+# ---- replies: the quoted text and the media of the replied-to message go to Gemini too ---------------------------------
+
+def Replied(text=None, caption=None, **media):
+    """A replied-to message; media kwargs: photo (list of sizes), video/animation/video_note/document items."""
+    replied = FakeMessage(text)
+    replied.caption = caption
+    for name in ("photo", "video", "animation", "video_note", "document"):
+        setattr(replied, name, media.get(name))
+    return replied
+
+
+def MediaItem(data=b"BYTES", mime=None, size=None, error=None, **extra):
+    item = MagicMock()
+    item.file_id, item.mime_type, item.file_size = "id", mime, size if size is not None else len(data)
+    for key, value in extra.items():
+        setattr(item, key, value)
+    file = MagicMock()
+    file.download_as_bytearray = AsyncMock(return_value=bytearray(data), side_effect=error)
+    item.get_file = AsyncMock(return_value=file)
+    return item
+
+
+async def test_the_replied_to_text_is_added_at_the_end_of_the_prompt(registry, store):
+    gemini = FakeGemini()
+    await Run(registry, store, "/gemini summarize", gemini, replyTo=Replied("The original\ntext"))
+    assert gemini.prompts == ["summarize\n\nThe message I am replying to:\nThe original\ntext"] and gemini.media == [[]]
+
+
+async def test_a_selected_quote_wins_over_the_whole_replied_to_message(registry, store):
+    gemini = FakeGemini()
+    await Run(registry, store, "/gemini explain", gemini, replyTo=Replied("whole message"), quote="just this part")
+    assert gemini.prompts == ["explain\n\nThe message I am replying to:\njust this part"]
+
+
+async def test_a_caption_counts_as_the_replied_to_text(registry, store):
+    gemini = FakeGemini()
+    await Run(registry, store, "/gemini what", gemini, replyTo=Replied(None, caption="holiday photo"))
+    assert gemini.prompts == ["what\n\nThe message I am replying to:\nholiday photo"]
+
+
+async def test_a_reply_with_an_empty_prompt_still_asks_about_the_quoted_text(registry, store):
+    gemini = FakeGemini()
+    await Run(registry, store, "/gemini", gemini, replyTo=Replied("translate me"))
+    assert gemini.prompts == ["The message I am replying to:\ntranslate me"]
+
+
+async def test_without_a_reply_nothing_is_added(registry, store):
+    gemini = FakeGemini()
+    await Run(registry, store, "/gemini hello", gemini)
+    assert gemini.prompts == ["hello"] and gemini.media == [[]]
+
+
+async def test_a_long_quoted_text_is_cut_but_does_not_make_the_prompt_too_long(registry, store):
+    gemini = FakeGemini()
+    await Run(registry, store, "/gemini tl;dr", gemini, replyTo=Replied("x" * (GEMINI_MAX_PROMPT_CHARS + 500)))
+    assert gemini.prompts[0].count("x") == GEMINI_MAX_PROMPT_CHARS
+
+
+async def test_the_largest_photo_of_the_replied_to_message_is_sent(registry, store):
+    small, large = MediaItem(b"small", size=5, width=90), MediaItem(b"LARGE", size=50, width=1280)
+    gemini = FakeGemini()
+    await Run(registry, store, "/gemini what is this", gemini, replyTo=Replied(photo=[small, large]))
+    assert gemini.media == [[("image/jpeg", b"LARGE")]] and gemini.prompts == ["what is this"]
+
+
+async def test_a_picture_alone_is_described(registry, store):
+    gemini = FakeGemini()
+    await Run(registry, store, "/gemini", gemini, replyTo=Replied(photo=[MediaItem(b"P")]))
+    assert gemini.media == [[("image/jpeg", b"P")]] and gemini.prompts == ["What is in this?"]
+
+
+@pytest.mark.parametrize("kind,mime,expected", [
+    ("video", "video/mp4", "video/mp4"), ("video", None, "video/mp4"), ("animation", "video/mp4", "video/mp4"),
+    ("video_note", None, "video/mp4"), ("document", "image/png", "image/png"), ("video", "video/webm", "video/webm"),
+])
+async def test_videos_animations_and_image_documents_are_sent(registry, store, kind, mime, expected):
+    gemini = FakeGemini()
+    await Run(registry, store, "/gemini look", gemini, replyTo=Replied(**{kind: MediaItem(b"V", mime=mime)}))
+    assert gemini.media == [[(expected, b"V")]]
+
+
+async def test_text_and_media_of_the_same_message_are_both_sent(registry, store):
+    gemini = FakeGemini()
+    await Run(registry, store, "/gemini what", gemini, replyTo=Replied(caption="cap", photo=[MediaItem(b"P")]))
+    assert gemini.prompts == ["what\n\nThe message I am replying to:\ncap"] and gemini.media == [[("image/jpeg", b"P")]]
+
+
+async def test_other_documents_are_ignored(registry, store):
+    gemini = FakeGemini()
+    await Run(registry, store, "/gemini what", gemini, replyTo=Replied(document=MediaItem(b"%PDF", mime="application/pdf")))
+    assert gemini.prompts == ["what"] and gemini.media == [[]]
+
+
+async def test_a_too_big_file_is_refused_without_calling_gemini(registry, store):
+    gemini = FakeGemini()
+    big = MediaItem(b"x", mime="video/mp4", size=30 * 1024 * 1024)
+    message, _ = await Run(registry, store, "/gemini what", gemini, replyTo=Replied(video=big))
+    assert gemini.prompts == [] and "too big" in Sent(message)[0]
+    big.get_file.assert_not_awaited()
+
+
+async def test_a_failed_download_is_reported_without_calling_gemini(registry, store):
+    gemini = FakeGemini()
+    message, _ = await Run(registry, store, "/gemini what", gemini, replyTo=Replied(video=MediaItem(mime="video/mp4", error=TelegramError("File is too big"))))
+    assert gemini.prompts == [] and "couldn't download" in Sent(message)[0]
+
+
+async def test_an_unreadable_mime_type_is_refused(registry, store):
+    gemini = FakeGemini()
+    message, _ = await Run(registry, store, "/gemini what", gemini, replyTo=Replied(video=MediaItem(mime="video/x-weird")))
+    assert gemini.prompts == [] and "can't read" in Sent(message)[0]
+
+
+async def test_usage_when_there_is_no_prompt_and_nothing_to_reply_to(registry, store):
+    message, _ = await Run(registry, store, "/gemini", FakeGemini(), replyTo=Replied(None))
+    assert Sent(message) == [GEMINI_USAGE]
+
+
+async def test_strangers_cannot_make_the_bot_download_media(registry, store):
+    gemini, item = FakeGemini(), MediaItem()
+    await Run(registry, store, "/gemini what", gemini, userId=STRANGER_ID, replyTo=Replied(video=item))
+    assert gemini.prompts == [] and item.get_file.await_count == 0

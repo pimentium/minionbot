@@ -9,7 +9,7 @@ from pathlib import Path
 
 from telegram import InputMediaPhoto, InputMediaVideo, LinkPreviewOptions, Message, MessageEntity, Update
 from telegram.constants import ChatAction, ChatType, ParseMode
-from telegram.error import BadRequest, Conflict, NetworkError
+from telegram.error import BadRequest, Conflict, NetworkError, TelegramError
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
 from minionbot.ai.markdown import SplitMarkdown, ToHtml
@@ -346,6 +346,83 @@ def PromptText(message: Message, context) -> str:
     return COMMAND_PREFIX.sub("", message.text or message.caption or "", count=1).strip()
 
 
+QUOTE_HEADER = "The message I am replying to:"
+# Gemini takes at most ~20 MB per request including everything inline; stay below it. Telegram bots can download 20 MB.
+GEMINI_MAX_MEDIA_BYTES = 15 * 1024 * 1024
+GEMINI_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
+GEMINI_VIDEO_TYPES = {"video/mp4", "video/mpeg", "video/quicktime", "video/webm", "video/x-flv", "video/3gpp", "video/x-ms-wmv"}
+
+
+class ReplyMediaError(Exception):
+    """The replied-to media can't be sent to Gemini; the text is what the user is told."""
+
+
+def _FileLike(value) -> bool:
+    return isinstance(getattr(value, "file_id", None), str)
+
+
+def ReplyQuote(message: Message) -> str:
+    """What the user replied to: the part they selected (a Telegram quote), else the whole text/caption."""
+    quote = getattr(message, "quote", None)
+    quoted = getattr(quote, "text", None)
+    if isinstance(quoted, str) and quoted.strip():
+        return quoted.strip()
+    replied = getattr(message, "reply_to_message", None)
+    if replied is None:
+        return ""
+    text = getattr(replied, "text", None) or getattr(replied, "caption", None)
+    return text.strip() if isinstance(text, str) else ""
+
+
+def ReplyMediaFile(message: Message):
+    """(file object, mime type) of the picture/video in the replied-to message, or None."""
+    replied = getattr(message, "reply_to_message", None)
+    if replied is None:
+        return None
+    photo = getattr(replied, "photo", None)
+    if isinstance(photo, (tuple, list)) and photo and all(_FileLike(size) for size in photo):
+        return max(photo, key=lambda size: (getattr(size, "file_size", None) or 0, getattr(size, "width", 0) or 0)), "image/jpeg"
+    for name, fallback in (("video", "video/mp4"), ("animation", "video/mp4"), ("video_note", "video/mp4"), ("document", "")):
+        item = getattr(replied, name, None)
+        if not _FileLike(item):
+            continue
+        mime = getattr(item, "mime_type", None)
+        mime = mime if isinstance(mime, str) and mime else fallback
+        if name == "document" and mime not in GEMINI_IMAGE_TYPES | GEMINI_VIDEO_TYPES:
+            continue  # other documents (PDF, archives...) are not sent
+        return item, mime
+    return None
+
+
+async def LoadReplyMedia(message: Message) -> list[tuple[str, bytes]]:
+    """Download the replied-to picture/video for Gemini. Raises ReplyMediaError with a user-facing text."""
+    found = ReplyMediaFile(message)
+    if found is None:
+        return []
+    item, mime = found
+    if mime not in GEMINI_IMAGE_TYPES | GEMINI_VIDEO_TYPES:
+        raise ReplyMediaError(f"Gemini can't read this kind of file ({mime}).")
+    size = getattr(item, "file_size", None)
+    if isinstance(size, int) and size > GEMINI_MAX_MEDIA_BYTES:
+        raise ReplyMediaError("That file is too big to send to Gemini (at most 15 MB).")
+    try:
+        file = await item.get_file()
+        data = bytes(await file.download_as_bytearray())
+    except TelegramError as error:
+        LOGGER.info("Could not download the replied-to media: %s", error)
+        raise ReplyMediaError("I couldn't download the file you replied to.") from error
+    if len(data) > GEMINI_MAX_MEDIA_BYTES:
+        raise ReplyMediaError("That file is too big to send to Gemini (at most 15 MB).")
+    return [(mime, data)]
+
+
+def BuildGeminiPrompt(prompt: str, quote: str) -> str:
+    """The user's prompt, then (at the end) the message it replies to."""
+    if not quote:
+        return prompt
+    return f"{prompt}\n\n{QUOTE_HEADER}\n{quote}" if prompt else f"{QUOTE_HEADER}\n{quote}"
+
+
 async def ReplyWithMarkdown(message: Message, markdown: str) -> None:
     """Gemini's Markdown as Telegram HTML; if Telegram refuses the formatting, as plain text."""
     for chunk in SplitMarkdown(markdown):
@@ -368,7 +445,9 @@ def MakeGeminiCommandCallback(registry: CommandRegistry, store: UserStore, gemin
             await message.reply_text(denial)
             return
         prompt = PromptText(message, context)
-        if not prompt:
+        quote = ReplyQuote(message)
+        hasMedia = ReplyMediaFile(message) is not None
+        if not prompt and not quote and not hasMedia:
             await message.reply_text(GEMINI_USAGE)
             return
         if len(prompt) > GEMINI_MAX_PROMPT_CHARS:
@@ -379,7 +458,16 @@ def MakeGeminiCommandCallback(registry: CommandRegistry, store: UserStore, gemin
             return
         await chat.send_action(ChatAction.TYPING)
         try:
-            await ReplyWithMarkdown(message, await gemini.Ask(prompt))
+            media = await LoadReplyMedia(message)
+        except ReplyMediaError as error:
+            await message.reply_text(str(error))
+            return
+        # The quoted text is capped separately, so a long message can't make an otherwise fine prompt "too long".
+        fullPrompt = BuildGeminiPrompt(prompt, quote[:GEMINI_MAX_PROMPT_CHARS])
+        if not fullPrompt:  # only a picture/video: ask what it shows
+            fullPrompt = "What is in this?"
+        try:
+            await ReplyWithMarkdown(message, await gemini.Ask(fullPrompt, media))
         except TranslationError as error:
             await message.reply_text(str(error))
             if isinstance(error, TranslationServiceError) and notifier:

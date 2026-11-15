@@ -148,6 +148,11 @@ and key as the translation, and returns the answer. Line breaks in the prompt ar
 - A short instruction is sent with every prompt: answer inside a Telegram chat, stay reasonably concise, answer in
   the language of the question. There is **no memory**: each `/gemini` is a fresh, single question, and replies to the
   bot's earlier answers are not used as context.
+- **Replies:** if you send `/gemini` as a reply, the text of the message you replied to (or, if you selected a part
+  of it with Telegram's quote feature, just that part) is added **at the end of the prompt** under "The message I am
+  replying to:". If that message has a **picture, video, GIF, video note or image file**, it is sent to Gemini too
+  (one file per request, at most 15 MB; other documents are ignored). A reply with no prompt of your own works as well:
+  the quoted text alone, or "What is in this?" for a bare picture. Without a reply nothing changes.
 - Everything said for `/rus` and `/eng` applies here too: the free-tier **privacy note** (Google may use what you
   send, and human reviewers may read it), the unpublished free-tier limits, retries on rate limits, and owner
   notifications for key or model problems. Anyone with the user role can spend your quota.
