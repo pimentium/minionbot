@@ -8,16 +8,17 @@ import re
 import tempfile
 from pathlib import Path
 
-from telegram import InputMediaPhoto, InputMediaVideo, LinkPreviewOptions, Message, MessageEntity, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, LinkPreviewOptions, Message, MessageEntity, ReplyParameters, Update
 from telegram.constants import ChatAction, ChatType, ParseMode
 from telegram.error import BadRequest, Conflict, NetworkError, TelegramError
-from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from minionbot.ai.markdown import SplitMarkdown, ToHtml
 from minionbot.builtin import ENG_USAGE, GEMINI_USAGE, GOOGLE_USAGE, RUS_USAGE, SOCIAL_USAGE, URL_USAGE
 from minionbot.commands import UNKNOWN_COMMAND_TEXT, CommandRegistry
 from minionbot.config import Config
 from minionbot.control import BotControl
+from minionbot.friends import COOLDOWN, PENDING, FriendRequest, FriendRequests
 from minionbot.notify import Notifier
 from minionbot.search.format import FormatResult
 from minionbot.search.models import SearchError, SearchServiceError, UnexpectedSearchError
@@ -34,7 +35,7 @@ from minionbot.translate.text import TranslateText
 from minionbot.web.errors import TranslationError, TranslationServiceError, UnexpectedWebError, WebError
 from minionbot.web.service import WebResult, WebService
 from minionbot.web.urls import FindWebUrls
-from minionbot.users import SOCIAL_LINKS_MIN_ROLE, UserStore
+from minionbot.users import SOCIAL_LINKS_MIN_ROLE, Role, UserError, UserRef, UserStore
 
 LOGGER = logging.getLogger(__name__)
 
@@ -454,6 +455,14 @@ def ReplyMediaFile(message: Message):
     photo = getattr(replied, "photo", None)
     if isinstance(photo, (tuple, list)) and photo and all(_FileLike(size) for size in photo):
         return max(photo, key=lambda size: (getattr(size, "file_size", None) or 0, getattr(size, "width", 0) or 0)), "image/jpeg"
+    sticker = getattr(replied, "sticker", None)
+    if _FileLike(sticker):
+        if getattr(sticker, "is_video", False) is True:
+            return sticker, "video/webm"
+        if getattr(sticker, "is_animated", False) is True:  # Lottie (.tgs) is not readable: use its still preview
+            thumbnail = getattr(sticker, "thumbnail", None)
+            return (thumbnail, "image/webp") if _FileLike(thumbnail) else (sticker, "application/x-tgsticker")
+        return sticker, "image/webp"
     for name, fallback in (("video", "video/mp4"), ("animation", "video/mp4"), ("video_note", "video/mp4"), ("document", "")):
         item = getattr(replied, name, None)
         if not _FileLike(item):
@@ -549,6 +558,122 @@ def MakeGeminiCommandCallback(registry: CommandRegistry, store: UserStore, gemin
             await message.reply_text("Sorry, something went wrong while asking Gemini.")
             if notifier:
                 await notifier.ReportFailure("Gemini (/gemini)", error)
+
+    return Callback
+
+
+FRIEND_PATTERN = r"^friend:(approve|deny):(\d+)$"
+
+
+def FriendButtons(telegramId: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("Approve", callback_data=f"friend:approve:{telegramId}"), InlineKeyboardButton("Deny", callback_data=f"friend:deny:{telegramId}")]]
+    )
+
+
+def MakeFriendCommandCallback(registry: CommandRegistry, store: UserStore, requests: FriendRequests, notifier: Notifier | None = None):
+    """/friend: a person without access asks; the owner gets the request with Approve / Deny buttons."""
+
+    async def Callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message, sender = update.effective_message, update.effective_user
+        if message is None or sender is None:
+            return
+        user, denial = registry.Authorize("friend", sender.id, sender.username, store)
+        if denial is not None:
+            await message.reply_text(denial)
+            return
+        if user is not None:
+            await message.reply_text("You already have access. Try /help.")
+            return
+        owner = store.GetOwner()
+        if owner is None or owner.telegramId is None:
+            await message.reply_text("My owner hasn't been in touch with me yet, so I can't ask him. Please try again later.")
+            return
+        chat = update.effective_chat
+        request = FriendRequest(
+            sender.id, (sender.username or "").lower() or None, sender.full_name or "", chat.id if chat else None, message.message_id
+        )
+        status = requests.Submit(request)
+        if status == PENDING:
+            await message.reply_text("Your request is already waiting for my owner's answer.")
+            return
+        if status == COOLDOWN:
+            await message.reply_text("My owner has denied your last request. You can ask again later.")
+            return
+        try:
+            await context.bot.send_message(
+                owner.telegramId,
+                f"{request.Describe()}\nasks for access to the bot. Approve?",
+                reply_markup=FriendButtons(sender.id),
+            )
+        except Exception as error:
+            requests.Take(sender.id)
+            LOGGER.warning("Could not forward an access request to the owner: %s", type(error).__name__)
+            await message.reply_text("Sorry, I couldn't reach my owner right now. Please try again later.")
+            if notifier:
+                await notifier.ReportFailure("forwarding an access request (/friend)", error)
+            return
+        await message.reply_text("I asked my owner. I'll tell you his answer.")
+
+    return Callback
+
+
+async def Tell(bot, request: FriendRequest, text: str) -> None:
+    """Answer where the request was made (a reply to it), else in the person's private chat."""
+    if request.chatId is not None and request.chatId != request.telegramId:
+        try:
+            await bot.send_message(
+                request.chatId, text, reply_parameters=ReplyParameters(request.messageId, allow_sending_without_reply=True)
+            )
+            return
+        except Exception as error:
+            LOGGER.info("Could not answer in the chat of the request: %s", type(error).__name__)
+    try:
+        await bot.send_message(request.telegramId, text)
+    except Exception as error:  # the person may have blocked the bot; the owner's decision still stands
+        LOGGER.info("Could not tell %s about the decision: %s", request.telegramId, type(error).__name__)
+
+
+def MakeFriendDecisionCallback(store: UserStore, requests: FriendRequests):
+    """Approve / Deny buttons under an access request. Only the owner's press counts."""
+
+    async def Callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if query is None or query.from_user is None or query.data is None:
+            return
+        match = re.match(FRIEND_PATTERN, query.data)
+        if match is None:
+            return
+        pressedBy = store.Authenticate(query.from_user.id, query.from_user.username)
+        if pressedBy is None or pressedBy.role != Role.OWNER:
+            await query.answer("Only my owner can answer this.", show_alert=True)
+            return
+        action, telegramId = match.group(1), int(match.group(2))
+        await query.answer()
+        request = requests.Take(telegramId) or FriendRequest(telegramId, None, "")  # after a restart only the ID is known
+        original = (query.message.text if query.message and query.message.text else request.Describe())
+        if store.Find(str(telegramId)) is not None:
+            await query.edit_message_text(f"{original}\n\nAlready has access.")
+            return
+        if action == "deny":
+            requests.Deny(telegramId)
+            await query.edit_message_text(f"{original}\n\nDenied.")
+            await Tell(context.bot, request, "Your request was denied.")
+            return
+        user, problem = None, ""
+        for name in request.NameCandidates():
+            try:
+                user = store.Add(UserRef(telegramId=telegramId, username=request.username), name=name, role=Role.USER)
+                break
+            except UserError as error:
+                problem = str(error)
+                if "Name" not in problem:  # only a taken name is worth another try
+                    break
+        if user is None:
+            await query.edit_message_text(f"{original}\n\nCould not add: {problem}")
+            return
+        await query.edit_message_text(f"{original}\n\nApproved: added as {user.name}.")
+        await Tell(context.bot, request, "Your request was approved. You can use me now: try /help.")
 
     return Callback
 
@@ -673,6 +798,8 @@ def BuildApplication(
     application.post_init = MakePostInit(notifier, restartInfo)
     application.post_shutdown = MakePostShutdown(service, webService, searchClient)
     application.add_error_handler(MakeErrorHandler(notifier))
+    friendRequests = FriendRequests()
+    application.add_handler(CallbackQueryHandler(MakeFriendDecisionCallback(store, friendRequests), pattern=FRIEND_PATTERN))
     # Commands that need chat I/O are implemented here; the rest run through registry.Dispatch.
     chatCommands = {
         "social": MakeSocialCommandCallback(registry, store, service, notifier),
@@ -681,6 +808,7 @@ def BuildApplication(
         "eng": MakeUrlCommandCallback(registry, store, webService, notifier, "eng", "en", ENG_USAGE),
         "google": MakeGoogleCommandCallback(registry, store, searchClient, notifier),
         "gemini": MakeGeminiCommandCallback(registry, store, gemini, notifier),
+        "friend": MakeFriendCommandCallback(registry, store, friendRequests, notifier),
     }
     for name, command in registry.commands.items():
         callback = chatCommands[name] if command.needsChat else MakeCommandCallback(registry, store, name, notifier, control)

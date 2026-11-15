@@ -183,7 +183,7 @@ def Replied(text=None, caption=None, **media):
     """A replied-to message; media kwargs: photo (list of sizes), video/animation/video_note/document items."""
     replied = FakeMessage(text)
     replied.caption = caption
-    for name in ("photo", "video", "animation", "video_note", "document"):
+    for name in ("photo", "video", "animation", "video_note", "document", "sticker"):
         setattr(replied, name, media.get(name))
     return replied
 
@@ -299,3 +299,31 @@ async def test_strangers_cannot_make_the_bot_download_media(registry, store):
     gemini, item = FakeGemini(), MediaItem()
     await Run(registry, store, "/gemini what", gemini, userId=STRANGER_ID, replyTo=Replied(video=item))
     assert gemini.prompts == [] and item.get_file.await_count == 0
+
+
+def Sticker(data=b"S", animated=False, video=False, thumbnail=None):
+    return MediaItem(data, is_animated=animated, is_video=video, thumbnail=thumbnail)
+
+
+async def test_a_static_sticker_is_sent_as_webp(registry, store):
+    gemini = FakeGemini()
+    await Run(registry, store, "/gemini what is this", gemini, replyTo=Replied(sticker=Sticker(b"WEBP")))
+    assert gemini.media == [[("image/webp", b"WEBP")]] and gemini.prompts == ["what is this"]
+
+
+async def test_a_video_sticker_is_sent_as_webm(registry, store):
+    gemini = FakeGemini()
+    await Run(registry, store, "/gemini", gemini, replyTo=Replied(sticker=Sticker(b"WEBM", video=True)))
+    assert gemini.media == [[("video/webm", b"WEBM")]] and gemini.prompts == ["What is in this?"]
+
+
+async def test_an_animated_sticker_uses_its_still_preview(registry, store):
+    gemini = FakeGemini()
+    await Run(registry, store, "/gemini", gemini, replyTo=Replied(sticker=Sticker(b"TGS", animated=True, thumbnail=MediaItem(b"THUMB"))))
+    assert gemini.media == [[("image/webp", b"THUMB")]]
+
+
+async def test_an_animated_sticker_without_a_preview_is_refused(registry, store):
+    gemini = FakeGemini()
+    message, _ = await Run(registry, store, "/gemini", gemini, replyTo=Replied(sticker=Sticker(animated=True)))
+    assert gemini.prompts == [] and "can't read" in Sent(message)[0]

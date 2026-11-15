@@ -190,7 +190,7 @@ class UserStore:
             who = "the owner"
         else:
             who = f"@{owner.username}" if owner.username else owner.name
-        return f"Please ask my owner {who} to allow me to help you too."
+        return f"Please ask my owner {who} to allow me to help you too. You can also send /friend and I will ask him for you."
 
     # ---- mutations ---------------------------------------------------
 

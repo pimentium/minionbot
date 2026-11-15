@@ -145,6 +145,14 @@ def GeminiCommand(context: CommandContext) -> str:
     return GEMINI_USAGE
 
 
+FRIEND_USAGE = "Send /friend to ask my owner for access."
+
+
+def FriendCommand(context: CommandContext) -> str:
+    """Placeholder: /friend needs chat I/O (it messages the owner), so the Telegram adapter runs it (see bot.py)."""
+    return FRIEND_USAGE
+
+
 def RusCommand(context: CommandContext) -> str:
     """Placeholder: /rus needs chat I/O, so the Telegram adapter runs it (see bot.py)."""
     return RUS_USAGE
@@ -201,6 +209,26 @@ def BuildRegistry() -> CommandRegistry:
                 ),
             ),
             minRole=Role.UNKNOWN,
+        )
+    )
+    registry.Register(
+        Command(
+            "friend",
+            FriendCommand,
+            help=(
+                HelpEntry(
+                    "/friend",
+                    "Ask my owner to give you access.",
+                    (
+                        "For people I don't know yet: I forward your request to my owner, who can approve or deny it. I tell you the answer.",
+                        "A denied request can be repeated after 24 hours.",
+                        "Works in groups too (the answer is posted there as a reply), also as '@name /friend'.",
+                    ),
+                ),
+            ),
+            minRole=Role.UNKNOWN,
+            inGroups=True,
+            needsChat=True,
         )
     )
     registry.Register(
@@ -281,7 +309,7 @@ def BuildRegistry() -> CommandRegistry:
                     (
                         "Everything after the command is the prompt, line breaks included (up to 8,000 characters).",
                         "As a reply: the text of the message you replied to (or your selected quote) is added at the end of the prompt.",
-                        "As a reply to a picture, video, GIF or video note (up to 15 MB): the file is sent too. A bare reply to a picture asks what is in it.",
+                        "As a reply to a picture, sticker, video, GIF or video note (up to 15 MB): the file is sent too. A bare reply to a picture asks what is in it.",
                         "No memory: every /gemini is a fresh question.",
                     ),
                 ),

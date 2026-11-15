@@ -32,6 +32,7 @@ All config can also be set via environment variables, so Docker works with `--en
 
 | Command | Lowest role | What |
 |---|---|---|
+| `/friend` | unknown | ask my owner for access (also works in groups, and as `@BotName /friend`; the answer is posted there as a reply): the owner gets your name, @username and ID with **Approve** / **Deny** buttons; on approval you are added with the `user` role, on denial you are told the request was denied and may ask again after 24 hours. Pending requests are kept in memory only (a restart forgets them; asking again works). The owner must have written to the bot at least once |
 | `/whoami` | unknown | show your Telegram ID and username; users also see their role and permissions |
 | `/start`, `/help` | user | list the commands available to your role, in sections by role (least restricted first). Each command is on its own line with its description quoted below it: a one-line summary, then bullet points for the special cases (replies, links, text, media, groups). Tap a command to copy it |
 | `/social <link>` | user | download a post from Instagram, Facebook, Twitter/X or Threads; same result as sending the bare link; also works in groups |
@@ -62,7 +63,7 @@ a link translates that link. Private-only commands (`/users`, `/restart`, ...) a
 
 | Role | Who | Adds |
 |---|---|---|
-| unknown | anyone not in the user list | `/whoami` only |
+| unknown | anyone not in the user list | `/whoami`, `/friend` |
 | user | added with `/users add` | `/start`, `/help`, social network links |
 | admin | promoted with `/users update` | all `/users` commands |
 | owner | **only** the user given at bot start (`--initial-user` / `INITIAL_USER`) | `/restart`, `/shutdown` |
@@ -78,7 +79,7 @@ Users files written before roles existed are converted when the bot starts: the 
 an explicit `admin` permission becomes the admin role, everyone else becomes `user` (nobody gains privileges;
 promote people again with `/users update`).
 
-Strangers get "Access denied." for everything except `/whoami`. The bot only answers in private chats.
+Strangers get a short refusal that points to the owner and to `/friend`, for everything except `/whoami` and `/friend`. The bot only answers in private chats.
 
 ## Social network downloads
 
@@ -156,7 +157,7 @@ and key as the translation, and returns the answer. Line breaks in the prompt ar
   bot's earlier answers are not used as context.
 - **Replies:** if you send `/gemini` as a reply, the text of the message you replied to (or, if you selected a part
   of it with Telegram's quote feature, just that part) is added **at the end of the prompt** under "The message I am
-  replying to:". If that message has a **picture, video, GIF, video note or image file**, it is sent to Gemini too
+  replying to:". If that message has a **picture, sticker, video, GIF, video note or image file** (an animated sticker is sent as its still preview), it is sent to Gemini too
   (one file per request, at most 15 MB; other documents are ignored). A reply with no prompt of your own works as well:
   the quoted text alone, or "What is in this?" for a bare picture. Without a reply nothing changes.
 - Everything said for `/rus` and `/eng` applies here too: the free-tier **privacy note** (Google may use what you

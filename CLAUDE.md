@@ -48,7 +48,7 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
   UNKNOWN keeps the short original format. Old files migrate without gaining privileges (owner flag -> owner,
   explicit "admin" permission -> admin, else user). `perms=` and permission strings no longer exist.
 - Storage: JSON file (chosen over SQLite by owner). Corrupt file => refuse to start, never overwrite.
-- Unknown users: "Access denied." for everything but `/whoami`. Private chats only.
+- Unknown users: `DeniedText` (names the owner, mentions `/friend`) for everything but `/whoami` and `/friend`. Private chats only.
 - Config precedence: CLI args (`--token`, `--initial-user`, `--users-file`) > env/.env > defaults.
 - httpx logging is lowered to WARNING because its URLs contain the bot token.
 - Commands that need async chat I/O (`/social`, later `/url`, `/google`) are flagged `needsChat=True` and are
@@ -63,6 +63,10 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
   falls back to tag-free text on `BadRequest`). `Command.help` holds `HelpEntry(syntax, summary, details)`; sections by
   `minRole`, least restricted first (`ROLE_TITLES`). New commands must describe their cases (reply, link, text, media) in
   `details`; everything is escaped.
+- `/friend` (`friends.py`, `MakeFriendCommandCallback`, `MakeFriendDecisionCallback`): stranger -> message to the owner with
+  inline Approve/Deny (`friend:approve|deny:<id>`) -> `store.Add(role USER)` and both sides told. Only the OWNER role's press
+  counts. State is in-memory (`FriendRequests`: pending + 24 h cooldown after a denial); after a restart a button press still
+  works with the ID only. Works in groups too (`inGroups=True`): the request remembers chat+message, the answer is a reply there, DM fallback. Needs the owner's numeric ID (he must have contacted the bot). Not verified against real Telegram.
 - New commands: write `Handler(context) -> str`, register in `BuildRegistry` with help lines and `minRole`.
 
 - Link cleaning (`links.py`) is an ALLOWLIST: keep the path (or for old Facebook forms only v / fbid /

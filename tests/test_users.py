@@ -103,9 +103,9 @@ def test_owner_and_denied_text(tmp_path):
     store = UserStore(tmp_path / "u.json")
     owner = store.EnsureInitialUser("42")
     assert owner.role == Role.OWNER and store.GetOwner() is owner
-    assert store.DeniedText() == "Please ask my owner owner to allow me to help you too."
+    assert store.DeniedText() == "Please ask my owner owner to allow me to help you too. You can also send /friend and I will ask him for you."
     store.Authenticate(42, "MyName")  # owner's username is learned on contact
-    assert store.DeniedText() == "Please ask my owner @myname to allow me to help you too."
+    assert store.DeniedText() == "Please ask my owner @myname to allow me to help you too. You can also send /friend and I will ask him for you."
     assert UserStore(tmp_path / "u.json").DeniedText() == store.DeniedText()
 
 

@@ -62,7 +62,7 @@ def test_command_access_matrix(registry, team, command, role):
 def test_commands_registered_with_the_specified_minimum_roles(registry):
     minimum = {name: c.minRole for name, c in registry.commands.items()}
     assert minimum == {
-        "whoami": Role.UNKNOWN, "start": Role.USER, "help": Role.USER, "social": Role.USER, "url": Role.USER, "rus": Role.USER, "eng": Role.USER, "gemini": Role.USER, "google": Role.USER,
+        "whoami": Role.UNKNOWN, "friend": Role.UNKNOWN, "start": Role.USER, "help": Role.USER, "social": Role.USER, "url": Role.USER, "rus": Role.USER, "eng": Role.USER, "gemini": Role.USER, "google": Role.USER,
         "users": Role.ADMIN, "restart": Role.OWNER, "shutdown": Role.OWNER,
     }
     assert SOCIAL_LINKS_MIN_ROLE == Role.USER
@@ -70,7 +70,7 @@ def test_commands_registered_with_the_specified_minimum_roles(registry):
 
 def test_permissions_are_cumulative(registry):
     lists = {role: registry.Permissions(role) for role in Role}
-    assert lists[Role.UNKNOWN] == ["/whoami"]
+    assert lists[Role.UNKNOWN] == ["/whoami", "/friend"]
     for lower, higher in zip(Role, list(Role)[1:]):
         assert set(lists[lower]) < set(lists[higher])
     assert "social network links" not in lists[Role.UNKNOWN] and "social network links" in lists[Role.USER]
@@ -97,9 +97,9 @@ def test_whoami_for_unknown_keeps_the_original_format(registry, team):
 @pytest.mark.parametrize(
     "role,permissions",
     [
-        ("user", "/start, /help, /whoami, /social, /url, /rus, /eng, /gemini, /google, social network links"),
-        ("admin", "/start, /help, /whoami, /social, /url, /rus, /eng, /gemini, /google, /users, social network links"),
-        ("owner", "/start, /help, /whoami, /social, /url, /rus, /eng, /gemini, /google, /users, /restart, /shutdown, social network links"),
+        ("user", "/start, /help, /whoami, /friend, /social, /url, /rus, /eng, /gemini, /google, social network links"),
+        ("admin", "/start, /help, /whoami, /friend, /social, /url, /rus, /eng, /gemini, /google, /users, social network links"),
+        ("owner", "/start, /help, /whoami, /friend, /social, /url, /rus, /eng, /gemini, /google, /users, /restart, /shutdown, social network links"),
     ],
 )
 def test_whoami_shows_role_and_permissions(registry, team, role, permissions):
