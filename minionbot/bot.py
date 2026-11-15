@@ -28,6 +28,8 @@ from minionbot.social.models import PHOTO, DownloadError, LocalMedia, Post, Unex
 from minionbot.social.service import SocialService
 from minionbot.social.triggers import IGNORE, NO_LINKS, Decide, Incoming
 from minionbot.translate.gemini import GeminiClient
+from minionbot.translate.language import LANGUAGE_NAMES, IsAlready
+from minionbot.translate.text import TranslateText
 from minionbot.web.errors import TranslationError, TranslationServiceError, UnexpectedWebError, WebError
 from minionbot.web.service import WebResult, WebService
 from minionbot.web.urls import FindWebUrls
@@ -261,6 +263,30 @@ async def ProcessUrls(
                 await notifier.ReportFailure("sending a web page result", error)
 
 
+async def ProcessText(message: Message, chat, text: str, translator, notifier: Notifier | None, language: str) -> None:
+    """/rus /eng with text instead of a link: reply with the translation as plain messages."""
+    name = LANGUAGE_NAMES[language]
+    if IsAlready(text, language):
+        await message.reply_text(f"The text is already in {name}, so it was not translated.")
+        return
+    await chat.send_action(ChatAction.TYPING)
+    try:
+        translated = await TranslateText(text, translator, language)
+    except TranslationError as error:
+        await message.reply_text(str(error))
+        if isinstance(error, TranslationServiceError) and notifier:
+            await notifier.ReportFailure("translating text (Gemini)", error)
+        return
+    except Exception as error:
+        LOGGER.exception("Failed to translate text")
+        await message.reply_text("Sorry, something went wrong while translating.")
+        if notifier:
+            await notifier.ReportFailure("translating text (Gemini)", error)
+        return
+    for chunk in ChunkText(translated, CHUNK_CHARS):
+        await message.reply_text(chunk, link_preview_options=NO_PREVIEW)
+
+
 def MakeUrlCommandCallback(
     registry: CommandRegistry,
     store: UserStore,
@@ -280,11 +306,25 @@ def MakeUrlCommandCallback(
         if denial is not None:
             await message.reply_text(denial)
             return
-        sources = CommandSources(message)
-        urls = next((found for source in sources if (found := FindWebUrls(source.text, source.urls))), [])
+        sources = [source for source in (ToIncoming(message), ReplySource(message)) if source is not None]
+        ownText = PromptText(message, context) if language else ""  # /rus /eng also translate plain text
+        replyText = ReplyQuote(message) if language else ""
+        # Order: a link in the command; text given to the command; a link in the replied-to message; its text.
+        urls = FindWebUrls(sources[0].text, sources[0].urls)
+        if not urls and not ownText:
+            urls = next((found for source in sources[1:] if (found := FindWebUrls(source.text, source.urls))), [])
         if not urls:
-            social = any(FindLinks(source.text, source.urls) for source in sources)
-            await message.reply_text("That is a social network post: use /social <link>." if social else usage)
+            if any(FindLinks(source.text, source.urls) for source in sources):
+                await message.reply_text("That is a social network post: use /social <link>.")
+                return
+            text = ownText or replyText
+            if not text:
+                await message.reply_text(usage)
+                return
+            if webService is None or webService.translator is None:
+                await message.reply_text("Translation is not configured (the owner needs to set a Gemini API key).")
+                return
+            await ProcessText(message, chat, text, webService.translator, notifier, language)
             return
         if language and (webService is None or webService.translator is None):
             await message.reply_text("Translation is not configured (the owner needs to set a Gemini API key).")

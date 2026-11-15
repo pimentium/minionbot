@@ -131,9 +131,9 @@ async def test_each_command_asks_for_its_language(registry, store, name, languag
 
 
 @pytest.mark.parametrize("name,usage", [("rus", RUS_USAGE), ("eng", ENG_USAGE)])
-async def test_usage_when_there_is_no_web_link(registry, store, name, usage):
+async def test_usage_when_there_is_neither_a_link_nor_text(registry, store, name, usage):
     web = FakeWeb()
-    message = await RunTranslate(registry, store, name, f"/{name} hello", web)
+    message = await RunTranslate(registry, store, name, f"/{name}", web)
     message.reply_text.assert_awaited_once_with(usage)
     assert web.read == []
 
@@ -184,7 +184,7 @@ def test_commands_are_registered_listed_and_open_to_groups(registry, store):
     names = {name for h in app.handlers[0] if isinstance(h, CommandHandler) for name in h.commands}
     assert {"rus", "eng", "url"} <= names
     help = registry.Dispatch("help", [], OWNER_ID, None, store)
-    assert "/rus <link>" in help and "/eng <link>" in help and "Russian" in help and "English" in help
+    assert "/rus <link|text>" in help and "/eng <link|text>" in help and "Russian" in help and "English" in help
     assert all(registry.commands[name].inGroups and registry.commands[name].needsChat for name in ("rus", "eng"))
 
 

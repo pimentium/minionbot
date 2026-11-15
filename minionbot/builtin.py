@@ -105,8 +105,8 @@ def SocialCommand(context: CommandContext) -> str:
 URL_USAGE = "Usage: /url <link to a web page>"
 GOOGLE_USAGE = "Usage: /google <what to search for>"
 GEMINI_USAGE = "Usage: /gemini <your question or prompt>"
-RUS_USAGE = "Usage: /rus <link to a web page>  (reads it translated to Russian)"
-ENG_USAGE = "Usage: /eng <link to a web page>  (reads it translated to English)"
+RUS_USAGE = "Usage: /rus <link to a web page or text>, or reply to a message with /rus  (translates to Russian)"
+ENG_USAGE = "Usage: /eng <link to a web page or text>, or reply to a message with /eng  (translates to English)"
 
 
 def UrlCommand(context: CommandContext) -> str:
@@ -180,7 +180,7 @@ def BuildRegistry() -> CommandRegistry:
             Command(
                 name,
                 handler,
-                help=((f"/{name} <link>", f"like /url, but the page is translated to {language} (Gemini) first"),),
+                help=((f"/{name} <link|text>", f"like /url, but the page is translated to {language} (Gemini) first; without a link translates the given text or the message you reply to"),),
                 minRole=Role.USER,
                 inGroups=True,
                 needsChat=True,

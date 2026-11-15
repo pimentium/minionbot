@@ -206,9 +206,9 @@ async def test_social_command_reads_the_replied_message_too(world):
     assert world.service.loaded == [TWEET]
 
 
-async def test_a_reply_without_any_link_gets_the_usage(world):
-    message = await world.Send(f"@{REAL_BOT} /rus", replyTo=FakeMessage("no link here"))
-    message.reply_text.assert_awaited_once_with(RUS_USAGE)
+async def test_a_reply_without_any_link_gets_the_usage_for_url_but_is_translated_for_rus(world):
+    message = await world.Send(f"@{REAL_BOT} /url", replyTo=FakeMessage("no link here"))
+    message.reply_text.assert_awaited_once_with(URL_USAGE)
 
 
 async def test_a_replied_social_post_is_pointed_to_social(world):

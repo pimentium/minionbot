@@ -36,7 +36,7 @@ All config can also be set via environment variables, so Docker works with `--en
 | `/start`, `/help` | user | list the commands available to your role |
 | `/social <link>` | user | download a post from Instagram, Facebook, Twitter/X or Threads; same result as sending the bare link; also works in groups |
 | `/url <link>` | user | read a web page in reader mode and send it as an Instant View article (see "Web pages"); also works in groups |
-| `/rus <link>`, `/eng <link>` | user | like `/url`, but the page is translated to Russian / English with Gemini first (see "Translation"); also work in groups |
+| `/rus <link\|text>`, `/eng <link\|text>` | user | like `/url`, but the page is translated to Russian / English with Gemini first; without a link they translate the given text, or the message you reply to (see "Translation"); also work in groups |
 | `/gemini <prompt>` | user | ask Gemini: everything after the command is sent as the prompt, the answer comes back formatted for Telegram; also works in groups |
 | `/google <query>` | user | search Google: the AI overview (when Google shows one) and the top results, via SerpApi; also works in groups |
 | `/users list` | admin | list users with their roles |
@@ -115,6 +115,12 @@ key (free tier works; create one in Google AI Studio):
 Optional: `--gemini-model` / `GEMINI_MODEL` (default `gemini-3.5-flash-lite`, the model Google's docs recommend for
 translation; if Google retires it, set another one). Without a key the commands say translation is not configured.
 
+- **Plain text instead of a link:** `/rus some text` or `/eng some text` (also after a mention) translates that text
+  and answers with it as ordinary messages (line breaks kept, long results split). Used as a **reply** without a link
+  of its own, the command translates the message you replied to (the part you selected with Telegram's quote feature,
+  if any, otherwise its text or caption). Order: a link in the command, then text given to the command, then a link in
+  the replied-to message, then its text. The same "already in the target language" check applies. The text is sent
+  to Gemini as escaped fragments with the usual translate-only instruction and the answer is reduced to plain text.
 - **How it translates:** the title and every text block (paragraphs, headings, list items, quotes, captions) are sent
   in batches of up to 6,000 characters; code blocks and images are left alone. Links, bold and italics stay in
   place, and the model cannot add links: only the source's own link addresses survive. A typical long article

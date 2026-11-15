@@ -82,6 +82,9 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
   validation of the answer. Invalid key is HTTP 400 `API_KEY_INVALID` (not 401). Free tier: Google may use the data
   to improve products (owner knows/chose free tier). Translation key/model errors (`TranslationServiceError`)
   notify the owner. Page text is untrusted: prompt says translate only, output is validated, hrefs are whitelisted.
+- `/rus` `/eng` without a link translate text (`translate/text.py`, `ProcessText` in `bot.py`): order is link in the command >
+  text given to the command (`PromptText`) > link in the replied-to message > its text (`ReplyQuote`). Plain-text reply, same
+  already-in-language check; fragments escaped in, tags stripped out. `/url` never translates text. Not verified live.
 - `/gemini <prompt>`: raw text after the command (`PromptText`: `rawArgs` after a mention, else the message text minus
   the command word) goes to Gemini with a short chat system instruction; single-turn, no memory. HTML first, plain
   text fallback on `BadRequest`. As a reply it also sends the replied-to text (Telegram quote if selected, else text/
