@@ -43,6 +43,8 @@ jobs:
           mkdir release
           cp -r minionbot main.py requirements.txt release/
           find release -name __pycache__ -prune -exec rm -rf {} +
+          # The version the bot reports in its start message
+          printf '{"commit": "%s", "date": "%s"}\n' "$GITHUB_SHA" "$(git log -1 --format=%cI)" > release/minionbot/version.json
           cd release
           # Wheels for the server (Debian 12, glibc 2.36, x86-64) whatever the runner is; only prebuilt wheels
           python -m pip install --no-compile --target deps --only-binary=:all: \

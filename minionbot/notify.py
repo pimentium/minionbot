@@ -11,6 +11,7 @@ import traceback
 from typing import Callable, Iterable
 
 from minionbot.users import UserStore
+from minionbot.version import DescribeVersion
 
 LOGGER = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ def DescribeRuntime() -> str:
         f"Host: {socket.gethostname()} ({platform.system()} {platform.release()}, {platform.machine()})"
         f"{', in Docker' if inDocker else ''}\n"
         f"IP address: {LocalIp()}\n"
+        f"Version: {DescribeVersion()}\n"
         f"Python {platform.python_version()}, pid {os.getpid()}"
     )
 
