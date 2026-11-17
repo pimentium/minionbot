@@ -1,4 +1,4 @@
-"""Built-in commands: /start, /help, /whoami, /users, /restart, /shutdown."""
+"""Built-in commands: /start, /help, /whoami, /users, /version, /restart, /shutdown."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import html
 
 from minionbot.commands import Command, CommandContext, CommandRegistry, HelpEntry
 from minionbot.control import RESTART, SHUTDOWN
+from minionbot.version import DescribeVersion
 from minionbot.users import ASSIGNABLE_ROLES, Role, ParseRole, ParseUserRef, UserError
 
 ROLE_NAMES = "|".join(role.label for role in ASSIGNABLE_ROLES)
@@ -54,6 +55,10 @@ def WhoamiCommand(context: CommandContext) -> str:
         f"Telegram ID: {context.telegramId}\nUsername: {username}\nAccess: granted as '{context.user.name}'\n"
         f"Role: {role.label}\nPermissions: {', '.join(context.registry.Permissions(role))}"
     )
+
+
+def VersionCommand(context: CommandContext) -> str:
+    return f"Version: {DescribeVersion()}"
 
 
 def UsersCommand(context: CommandContext) -> str:
@@ -363,6 +368,14 @@ def BuildRegistry() -> CommandRegistry:
                     ("You cannot remove yourself or the owner.",),
                 ),
             ),
+            minRole=Role.ADMIN,
+        )
+    )
+    registry.Register(
+        Command(
+            "version",
+            VersionCommand,
+            help=(HelpEntry("/version", "Show the running version.", ("The commit and its date; 'development' when not deployed.",)),),
             minRole=Role.ADMIN,
         )
     )

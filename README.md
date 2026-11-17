@@ -40,6 +40,7 @@ All config can also be set via environment variables, so Docker works with `--en
 | `/rus <link\|text>`, `/eng <link\|text>` | user | like `/url`, but the page is translated to Russian / English with Gemini first; without a link they translate the given text, or the message you reply to (see "Translation"); also work in groups |
 | `/gemini <prompt>` | user | ask Gemini: everything after the command is sent as the prompt, the answer comes back formatted for Telegram; also works in groups |
 | `/google <query>` | user | search Google: the AI overview (when Google shows one) and the top results, via SerpApi; also works in groups |
+| `/version` | admin | show the running version (commit and date; `development` outside a deployment) |
 | `/users list` | admin | list users with their roles |
 | `/users add <id\|@username> [user\|admin] [name]` | admin | add a user (role defaults to `user`) |
 | `/users update <id\|@username\|name> <user\|admin>` | admin | change a user's role (the role is required) |
