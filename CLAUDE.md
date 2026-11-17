@@ -142,5 +142,24 @@ SerpApi's documentation, the second response format is not documented), publishi
 development), Threads posts with images/video, Facebook video posts, the video aspect-ratio fix in real Telegram. The MP4 reader was checked
 against ffprobe on generated files.
 
+## Deployment
+- `.github/workflows/deploy.yml`: on push to `main` run pytest, then pack `minionbot main.py requirements.txt deps`
+  (`deps/` = `pip install --target` with `--only-binary=:all:` for the server's Python and glibc, compiled with
+  `unchecked-hash` pycs because the release is read-only on the server), then upload `release.tar.gz` to
+  `DEPLOY_URL/deploy` (signed with `DEPLOY_SECRET`) and poll `DEPLOY_URL/status`. The server side (container, Python
+  image, webhook, secrets) is the `minionbot` role in the `minions` repo; there is deliberately no Dockerfile here.
+- A release may contain only regular files and directories (no symlinks, no hard links: `--hard-dereference`) and only
+  the top-level names `minionbot`, `main.py`, `deps`, `requirements.txt`; it must contain `main.py`, `minionbot/main.py`
+  and `deps/telegram/__init__.py`. A new top-level name needs the same change in `minions` (`selfupdating_app_release_top`).
+- The bot is started as `python main.py` in the release directory with `PYTHONPATH=deps`. Everything it writes goes to
+  `/state` (`USERS_FILE`); the release directory is read-only. Keep new files/state under `USERS_FILE`'s directory.
+- `READY_FILE` (env only): `minionbot/ready.py` writes it in `PostInit` after the start-up notification; the deployment
+  health check depends on it, so keep that call in `MakePostInit`. `/shutdown` (exit 0) keeps the bot stopped on the server
+  until the next release or a container restart; any other exit is restarted by the container's supervisor.
+- `tests/data` (mp4 fixtures) must be committed: `.gitignore` ignores only the top-level `/data/`.
+- Python in CI (`PYTHON_VERSION`) = `minionbot_python` in `minions`; dependencies need prebuilt cp-wheels for it.
+- Verified against the fake Telegram API and a real container supervisor only (see the `minions` repo); NOT verified: the
+  workflow on GitHub, the container in Docker, a real deployment.
+
 ## Not yet
-Dockerfile/compose, real-Telegram verification.
+Real-Telegram verification.

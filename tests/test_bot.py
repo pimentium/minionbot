@@ -392,6 +392,24 @@ async def test_post_init_sends_startup_notification():
     notifier.NotifyStartup.assert_awaited_once_with(BOT, False, "restart #1 after: X")
 
 
+async def test_post_init_writes_the_ready_file(tmp_path):
+    application = MagicMock()
+    application.bot_data = {}
+    application.bot.get_me = AsyncMock(return_value=MagicMock(username=BOT, can_read_all_group_messages=True))
+    ready = tmp_path / "ready"
+    await bot.MakePostInit(FakeNotifier(), "", str(ready))(application)
+    assert ready.exists()
+
+
+async def test_post_init_without_ready_file_writes_nothing(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    application = MagicMock()
+    application.bot_data = {}
+    application.bot.get_me = AsyncMock(return_value=MagicMock(username=BOT, can_read_all_group_messages=True))
+    await bot.MakePostInit(FakeNotifier())(application)
+    assert list(tmp_path.iterdir()) == []
+
+
 async def test_post_shutdown_closes_fetcher():
     service = MagicMock()
     service.fetcher.Close = AsyncMock()

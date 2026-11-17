@@ -20,6 +20,7 @@ from minionbot.config import Config
 from minionbot.control import BotControl
 from minionbot.friends import COOLDOWN, PENDING, FriendRequest, FriendRequests
 from minionbot.notify import Notifier
+from minionbot.ready import WriteReadyFile
 from minionbot.search.format import FormatResult
 from minionbot.search.models import SearchError, SearchServiceError, UnexpectedSearchError
 from minionbot.search.serpapi import MAX_QUERY_CHARS, SerpApiClient
@@ -739,11 +740,12 @@ async def LogBotInfo(application: Application) -> None:
     LOGGER.info("Running as @%s; group privacy mode: %s", me.username, privacy)
 
 
-def MakePostInit(notifier: Notifier, restartInfo: str = ""):
+def MakePostInit(notifier: Notifier, restartInfo: str = "", readyFile: str = ""):
     async def PostInit(application: Application) -> None:
         await LogBotInfo(application)
         me = await application.bot.get_me()
         await notifier.NotifyStartup(me.username, application.bot_data.get(PRIVACY_ON_KEY), restartInfo)
+        WriteReadyFile(readyFile)  # Telegram accepted the token: tell the supervisor (no-op without READY_FILE)
 
     return PostInit
 
@@ -795,7 +797,7 @@ def BuildApplication(
     application = builder.build()
     secrets = [config.botToken, config.telegraphToken, config.serpApiKey, config.geminiKey] + [v for a in config.accounts.values() for v in (a.sessionId, a.authToken)]
     notifier = Notifier(application.bot, store, secrets)
-    application.post_init = MakePostInit(notifier, restartInfo)
+    application.post_init = MakePostInit(notifier, restartInfo, config.readyFile)
     application.post_shutdown = MakePostShutdown(service, webService, searchClient)
     application.add_error_handler(MakeErrorHandler(notifier))
     friendRequests = FriendRequests()

@@ -29,6 +29,7 @@ class Config:
     googleCountry: str = ""  # gl; empty = Google decides
     geminiKey: str = ""  # Gemini API key for /rus and /eng; without it they say translation is not configured
     geminiModel: str = DEFAULT_MODEL
+    readyFile: str = ""  # READY_FILE (environment only): written once the bot is up, for a supervisor; empty = not written
 
 
 def LoadAccounts(env: Mapping[str, str], overrides: Mapping[str, SocialAccount] | None) -> dict[str, SocialAccount]:
@@ -79,4 +80,5 @@ def LoadConfig(
         (googleCountry or env.get("GOOGLE_COUNTRY", "")).strip().lower(),
         (geminiKey or env.get("GEMINI_API_KEY", "")).strip(),
         (geminiModel or env.get("GEMINI_MODEL", "")).strip() or DEFAULT_MODEL,
+        env.get("READY_FILE", "").strip(),
     )

@@ -56,3 +56,8 @@ def test_google_settings():
     assert (config.serpApiKey, config.googleLanguage, config.googleCountry) == ("envkey", "ru", "de")
     config = LoadConfig({**env, "SERPAPI_KEY": "envkey"}, serpApiKey="clikey", googleLanguage="en", googleCountry="us")
     assert (config.serpApiKey, config.googleLanguage, config.googleCountry) == ("clikey", "en", "us")
+
+
+def test_ready_file_comes_from_the_environment_only():
+    assert LoadConfig({"BOT_TOKEN": "t", "INITIAL_USER": "1"}).readyFile == ""
+    assert LoadConfig({"BOT_TOKEN": "t", "INITIAL_USER": "1", "READY_FILE": " /tmp/ready "}).readyFile == "/tmp/ready"

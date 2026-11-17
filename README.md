@@ -270,10 +270,50 @@ messages.
   (/restart)`. `/shutdown` stops the bot and exits with code 0; it stays down until someone starts it on
   its host. Both work in private chat only.
 - **Hard crashes:** if the whole process dies (out of memory, killed), only an outer supervisor can restart
-  it. Use `restart: on-failure` in Docker compose or `Restart=on-failure` in systemd. Do **not** use
-  `always` / `unless-stopped`: they would also bring the bot back after `/shutdown` (exit code 0).
+  it. On the server that is the container's own supervisor (see "Deployment"); with plain Docker or systemd use
+  `restart: on-failure` / `Restart=on-failure`. Do **not** use `always` / `unless-stopped` for the bot process itself:
+  they would also bring the bot back after `/shutdown` (exit code 0).
 - **Logs:** the bot token and session cookies are redacted from all log output (python-telegram-bot itself
   prints the token in some error messages).
+
+## Deployment (self-updating container)
+
+On the server the bot runs in one Docker container that updates itself; nothing else is installed on the host. The
+container, its Python and the webhook are set up by the `minionbot` role of the `minions` Ansible repository; this
+repository only builds and uploads releases. `.github/workflows/deploy.yml` runs on every push to `main` (and by
+hand: Actions, Run workflow):
+
+1. runs the tests; a failure stops everything;
+2. packs `minionbot/`, `main.py` and the libraries of `requirements.txt` (downloaded as prebuilt wheels for the
+   server's Python, compiled once) into `release.tar.gz`;
+3. if `DEPLOY_URL` is set, uploads it with a signed request to the server's webhook, which unpacks it, restarts the bot on
+   the new version and **goes back to the previous version** if the new one does not report "ready" (see below) within two
+   minutes or keeps crashing. The run waits for the result; red means the server did not switch.
+
+One-time setup in the repository (Settings, Secrets and variables, Actions):
+
+| Kind | Name | Value |
+|---|---|---|
+| Variable | `DEPLOY_URL` | `https://<host>/hooks/minionbot` (leave unset to only run the tests) |
+| Secret | `DEPLOY_SECRET` | shared key of the webhook (64 hex digits, `openssl rand -hex 32`; same value as `minionbot_hook_secret` on the server) |
+
+Things to know:
+
+- **One bot, one place.** A bot token can be used by one running instance only (a second one gets a polling conflict).
+  Stop the bot on your computer, or use another bot token for local work, before the server's copy starts.
+- **Configuration is not in this repository.** The server passes the options as environment variables (`BOT_TOKEN`,
+  `INITIAL_USER`, `GEMINI_API_KEY`, ...) from its encrypted secrets; the user list and the Telegraph token live in
+  the container's state directory (`USERS_FILE=/state/users.json`), which survives deployments.
+- **Ready file.** If the environment variable `READY_FILE` is set, the bot writes a timestamp there once Telegram accepted
+  the token (after the start-up message). The server only keeps a new version when that file appears after the start
+  and the bot then stays up for 15 seconds. Without `READY_FILE` nothing is written.
+- **Start-up message.** Every deployment restarts the bot, so you get its start-up message in Telegram each time:
+  that is also your sign that the new version runs.
+- **`/restart`** re-executes the bot in the same process (same release). **`/shutdown`** stops it for good: the server does
+  not start it again until the next deployment or a restart of the container (`sudo docker restart minionbot`).
+- The Python version in the workflow (`PYTHON_VERSION`) must match `minionbot_python` in the `minions` repository. The
+  libraries must have prebuilt Linux x86-64 wheels for it (the workflow does not compile anything).
+- Roll back by re-running the workflow of an older commit.
 
 ## Tests
 
