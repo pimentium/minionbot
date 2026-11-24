@@ -103,6 +103,8 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
   HTML scripts receive). The key is in the URL query, so httpx errors/URLs must never be logged or shown: the client
   maps errors to its own messages and scrubs the key; key is in the redaction secrets. Key/quota errors
   (`SearchServiceError`) notify the owner. Provider-specific code stays in `serpapi.py`.
+- Uploads always pass `filename=item.path.name` (real extension): raw bytes get the name `application.octet-stream` and iOS
+  Telegram then silently fails to paste a copied video. Fix not verified on a real device; if it persists suspect the codec.
 - Videos are sent with width/height/duration from `videoinfo.py`; without them Telegram guesses the shape
   and shows landscape videos wrongly. Rotation matrix is honored. Fixtures in `tests/data` made with ffmpeg.
 - gallery-dl and yt-dlp do NOT support Threads, hence the custom reader (fragile, anonymous only). Threads and

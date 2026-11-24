@@ -179,19 +179,19 @@ async def SendMedia(message: Message, post: Post, caption: str) -> None:
         if len(group) == 1:
             item = group[0]
             if item.kind == PHOTO:
-                await message.reply_photo(item.path.read_bytes(), caption=groupCaption, **timeouts)
+                await message.reply_photo(item.path.read_bytes(), caption=groupCaption, filename=item.path.name, **timeouts)
             else:
                 await message.reply_video(
-                    item.path.read_bytes(), caption=groupCaption, supports_streaming=True, **VideoShape(item), **timeouts
+                    item.path.read_bytes(), caption=groupCaption, supports_streaming=True, filename=item.path.name, **VideoShape(item), **timeouts
                 )
             continue
         album = []
         for index, item in enumerate(group):
             itemCaption = groupCaption if index == 0 else None
             if item.kind == PHOTO:
-                album.append(InputMediaPhoto(item.path.read_bytes(), caption=itemCaption))
+                album.append(InputMediaPhoto(item.path.read_bytes(), caption=itemCaption, filename=item.path.name))
             else:
-                album.append(InputMediaVideo(item.path.read_bytes(), caption=itemCaption, supports_streaming=True, **VideoShape(item)))
+                album.append(InputMediaVideo(item.path.read_bytes(), caption=itemCaption, supports_streaming=True, filename=item.path.name, **VideoShape(item)))
         await message.reply_media_group(album, **timeouts)
 
 

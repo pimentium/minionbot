@@ -435,3 +435,24 @@ def test_log_filter_redacts_token_in_messages_and_tracebacks():
     filterer.filter(record)
     formatted = logging.Formatter("%(message)s").format(record)
     assert "SECRET-TOKEN" not in formatted and "failed with ***" in formatted and "was rejected" in formatted
+
+
+# ---- uploaded files carry a real name: iOS cannot paste a video that Telegram stores as "application.octet-stream" --------
+
+async def test_uploads_are_named_with_the_real_extension(tmp_path):
+    from telegram import InputFile
+
+    from minionbot.bot import SendMedia
+
+    video, photo = tmp_path / "clip.mp4", tmp_path / "pic.jpg"
+    video.write_bytes(b"v")
+    photo.write_bytes(b"p")
+    message = FakeMessage("x")
+    await SendMedia(message, Post("twitter", TWEET, "@a", "t", [LocalMedia(video, VIDEO)]), "cap")
+    assert message.reply_video.call_args[1]["filename"] == "clip.mp4"
+    await SendMedia(message, Post("twitter", TWEET, "@a", "t", [LocalMedia(photo, PHOTO)]), "cap")
+    assert message.reply_photo.call_args[1]["filename"] == "pic.jpg"
+    await SendMedia(message, Post("twitter", TWEET, "@a", "t", [LocalMedia(video, VIDEO), LocalMedia(photo, PHOTO)]), "cap")
+    album = message.reply_media_group.call_args[0][0]
+    assert [item.media.filename for item in album] == ["clip.mp4", "pic.jpg"]
+    assert InputFile(b"v", filename="clip.mp4").mimetype == "video/mp4"  # what PTB then sends as the part's content type
