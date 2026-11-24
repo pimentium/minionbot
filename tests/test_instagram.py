@@ -78,3 +78,40 @@ def test_fetch_failure():
 def test_factory_uses_instagrapi_only_with_session_id():
     assert isinstance(BuildDownloaders({"instagram": SocialAccount(sessionId=SESSION)})["instagram"], InstagramDownloader)
     assert not isinstance(BuildDownloaders({})["instagram"], InstagramDownloader)
+
+
+STORY = "https://www.instagram.com/stories/alice/4037489269225376125/"
+
+
+def StoryClient(info=None, error=None):
+    client = MagicMock()
+    client.story_pk_from_url.return_value = "4037489269225376125"
+    if error:
+        client.story_info.side_effect = error
+    else:
+        client.story_info.return_value = info
+    return client
+
+
+def Story(mediaType, **kwargs):  # instagrapi's Story has no caption_text
+    base = dict(media_type=mediaType, user=USER, thumbnail_url=None, video_url=None)
+    base.update(kwargs)
+    return SimpleNamespace(**base)
+
+
+def test_story_photo_uses_story_info_not_media_info():
+    client = StoryClient(Story(1, thumbnail_url="https://cdn/s.jpg"))
+    post = Downloader(client).Fetch(STORY)
+    client.story_info.assert_called_once_with("4037489269225376125")
+    client.media_info.assert_not_called()
+    assert (post.author, post.text) == ("@alice", "") and [(m.url, m.kind) for m in post.media] == [("https://cdn/s.jpg", PHOTO)]
+
+
+def test_story_video():
+    post = Downloader(StoryClient(Story(2, video_url="https://cdn/s.mp4", thumbnail_url="https://cdn/t.jpg"))).Fetch(STORY)
+    assert [(m.url, m.kind) for m in post.media] == [("https://cdn/s.mp4", VIDEO)]
+
+
+def test_an_expired_story_has_its_own_message():
+    with pytest.raises(DownloadError, match="story.*24 hours"):
+        Downloader(StoryClient(error=RuntimeError("gone"))).Fetch(STORY)

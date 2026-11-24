@@ -26,10 +26,10 @@ from minionbot.search.models import SearchError, SearchServiceError, UnexpectedS
 from minionbot.search.serpapi import MAX_QUERY_CHARS, SerpApiClient
 from minionbot.social.format import BuildTexts
 from minionbot.social.format import ChunkText
-from minionbot.social.links import FindLinks
+from minionbot.social.links import FindLinks, FindUnsupportedSocialUrls
 from minionbot.social.models import PHOTO, DownloadError, LocalMedia, Post, UnexpectedDownloadError
 from minionbot.social.service import SocialService
-from minionbot.social.triggers import IGNORE, NO_LINKS, Decide, Incoming
+from minionbot.social.triggers import IGNORE, NO_LINKS, UNSUPPORTED, Decide, Incoming
 from minionbot.translate.gemini import GeminiClient
 from minionbot.translate.language import LANGUAGE_NAMES, IsAlready
 from minionbot.translate.text import TranslateText
@@ -50,6 +50,7 @@ PRIVACY_HINT_TEXT = (
     "Meanwhile you can send the link together with my @name."
 )
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
+UNSUPPORTED_TEXT = "I can't download this kind of social network link (only posts, reels, stories and tweets).\n{urls}\nYou can try /url <link> to read the page instead."
 UPLOAD_TIMEOUT = 180
 
 
@@ -233,9 +234,14 @@ def MakeSocialCommandCallback(registry: CommandRegistry, store: UserStore, servi
         if denial is not None:
             await message.reply_text(denial)
             return
-        links = next((found for source in CommandSources(message) if (found := FindLinks(source.text, source.urls))), [])
+        sources = CommandSources(message)
+        links = next((found for source in sources if (found := FindLinks(source.text, source.urls))), [])
         if not links:
-            await message.reply_text(SOCIAL_USAGE)
+            unsupported = next((found for source in sources if (found := FindUnsupportedSocialUrls(source.text, source.urls))), [])
+            if unsupported:
+                await message.reply_text(UNSUPPORTED_TEXT.format(urls="\n".join(unsupported)), link_preview_options=NO_PREVIEW)
+            else:
+                await message.reply_text(SOCIAL_USAGE)
             return
         await ProcessLinks(message, chat, links, service, notifier)
 
@@ -344,9 +350,9 @@ def MakeUrlCommandCallback(
         ownText = PromptText(message, context) if language else ""  # /rus /eng also translate plain text
         replyText = ReplyQuote(message) if language else ""
         # Order: a link in the command; text given to the command; a link in the replied-to message; its text.
-        urls = FindWebUrls(sources[0].text, sources[0].urls)
+        urls = FindWebUrls(sources[0].text, sources[0].urls, includeSocial=True)
         if not urls and not ownText:
-            urls = next((found for source in sources[1:] if (found := FindWebUrls(source.text, source.urls))), [])
+            urls = next((found for source in sources[1:] if (found := FindWebUrls(source.text, source.urls, includeSocial=True))), [])
         if not urls:
             if any(FindLinks(source.text, source.urls) for source in sources):
                 await message.reply_text("That is a social network post: use /social <link>.")
@@ -723,8 +729,13 @@ def MakeMessageCallback(
             )
             await message.reply_text(PRIVACY_HINT_TEXT if lostReply else NO_LINKS_TEXT if decision.mentioned else UNKNOWN_COMMAND_TEXT)
             return
+        if decision.kind == UNSUPPORTED:
+            await message.reply_text(UNSUPPORTED_TEXT.format(urls="\n".join(decision.unsupported)), link_preview_options=NO_PREVIEW)
+            return
         await ProcessLinks(message, chat, decision.links, service, notifier)
         await ProcessUrls(message, chat, decision.urls, webService, notifier)
+        if decision.unsupported:
+            await message.reply_text(UNSUPPORTED_TEXT.format(urls="\n".join(decision.unsupported)), link_preview_options=NO_PREVIEW)
 
     return Callback
 

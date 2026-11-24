@@ -61,7 +61,7 @@ async def test_hidden_text_link_in_the_command_message(registry, store, tmp_path
     assert service.loaded == [INSTA]
 
 
-@pytest.mark.parametrize("text", ["/social", "/social hello there", "/social https://example.com/article", "/social https://www.instagram.com/someuser/"])
+@pytest.mark.parametrize("text", ["/social", "/social hello there", "/social https://example.com/article"])
 async def test_usage_when_there_is_no_supported_link(registry, store, text):
     service = FakeService()
     message = await Run(registry, store, text, service)

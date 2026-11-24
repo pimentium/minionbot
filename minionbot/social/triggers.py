@@ -5,13 +5,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from minionbot.social.links import FindLinks
+from minionbot.social.links import FindLinks, FindUnsupportedSocialUrls
 from minionbot.social.models import Link
 from minionbot.web.urls import FindWebUrls
 
 IGNORE = "ignore"
 PROCESS = "process"
 NO_LINKS = "nolinks"
+UNSUPPORTED = "unsupported"  # only links to social network pages we cannot download
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class Decision:
     mentioned: bool = False
     links: list[Link] = field(default_factory=list)  # social network posts (/social)
     urls: list[str] = field(default_factory=list)  # all other web pages (/url)
+    unsupported: list[str] = field(default_factory=list)  # social network pages that are not downloadable posts
 
 
 def MentionPattern(botUsername: str) -> re.Pattern:
@@ -48,7 +50,11 @@ def Decide(isPrivate: bool, botUsername: str, message: Incoming, replied: Incomi
     mentioned = IsMentioned(message.text, botUsername)
     if not isPrivate and (not mentioned or message.text.lstrip().startswith("/")):
         return Decision(IGNORE)
-    links, urls = FindLinks(message.text, message.urls), FindWebUrls(message.text, message.urls)
-    if not links and not urls and replied is not None and mentioned:
-        links, urls = FindLinks(replied.text, replied.urls), FindWebUrls(replied.text, replied.urls)
-    return Decision(PROCESS if links or urls else NO_LINKS, mentioned, links, urls)
+    def Find(source: Incoming):
+        return FindLinks(source.text, source.urls), FindWebUrls(source.text, source.urls), FindUnsupportedSocialUrls(source.text, source.urls)
+
+    links, urls, unsupported = Find(message)
+    if not links and not urls and not unsupported and replied is not None and mentioned:
+        links, urls, unsupported = Find(replied)
+    kind = PROCESS if links or urls else UNSUPPORTED if unsupported else NO_LINKS
+    return Decision(kind, mentioned, links, urls, unsupported)

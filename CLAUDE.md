@@ -114,6 +114,8 @@ Personal Telegram bot (python-telegram-bot v22, polling). See README.md for usag
   matched by `id`), ordered by `self_thread.post_ids`.
 - Facebook: gallery-dl (media) + `facebook.py` page reader (sharer's own author/text; gallery-dl follows shares
   to the original and has no option for this).
+- Social-host links that `Classify` rejects (profiles, feeds, highlights) are "unsupported": `Decide` -> `UNSUPPORTED` kind, reply
+  `UNSUPPORTED_TEXT` suggesting `/url`; `FindWebUrls` skips them unless `includeSocial=True` (explicit `/url`, `/rus`, `/eng` only).
 - Strangers get `store.DeniedText()` ("Please ask my owner @x ...") everywhere; owner = user with the owner
   role (the initial user). Usernames are refreshed on contact.
 - Groups only work reliably with BotFather privacy mode DISABLED (+ re-add the bot); logged at startup via

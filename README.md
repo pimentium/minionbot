@@ -216,6 +216,17 @@ archived copy was used). If Telegraph is unreachable, the text is sent as plain 
 - **Limits:** no JavaScript is executed, so pages that render their content in the browser (some SPAs, YouTube,
   most social sites) come back empty. Direct links to images, videos and PDFs are refused.
 
+### Unsupported social network links
+
+A link to a social network that is not a downloadable post (a profile, a feed, an Instagram highlight...) is not an
+"unknown command": the bot says it can't download that kind of link and suggests `/url <link>`. `/url` does try to read
+such pages (they are never read implicitly). Supported post links given to `/url` are still pointed to `/social`.
+
+### Instagram stories
+
+Single story links (`instagram.com/stories/<user>/<id>`) are downloaded like posts (photo or video, via the logged-in
+session). Stories vanish after 24 hours, so an expired one is reported as such. Highlights are not supported.
+
 ### Link cleaning
 
 Links are reduced to what identifies the post before anything is downloaded, so tracking noise never reaches

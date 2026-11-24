@@ -17,6 +17,8 @@ FACEBOOK_HOSTS = {"facebook.com", "www.facebook.com", "m.facebook.com", "web.fac
 FACEBOOK_SHORT_HOSTS = {"fb.watch"}
 
 INSTAGRAM_PATH = re.compile(r"^/(?:[\w.]+/)?(?:p|reel|reels|tv)/[\w-]+", re.IGNORECASE)
+# A story: /stories/<user>/<numeric id>. Highlights (/stories/highlights/<id>) are not single stories and are not supported.
+INSTAGRAM_STORY_PATH = re.compile(r"^/stories/(?!highlights/)[\w.]+/\d+", re.IGNORECASE)
 TWITTER_PATH = re.compile(r"^/(?:i/web|\w+)/status(?:es)?/\d+", re.IGNORECASE)
 THREADS_PATH = re.compile(r"^/@[\w.]+/post/[\w-]+", re.IGNORECASE)
 # Facebook links whose path alone identifies the post: any query (__cft__, __tn__, fbclid, ...) is noise.
@@ -63,6 +65,8 @@ def Classify(url: str) -> Link | None:
     except ValueError:
         return None
     host, path = (parts.hostname or "").lower(), parts.path
+    if host in INSTAGRAM_HOSTS and (match := INSTAGRAM_STORY_PATH.match(path)):
+        return Link("instagram", Clean("www.instagram.com", match.group(0).rstrip("/") + "/"))
     if host in INSTAGRAM_HOSTS and (match := INSTAGRAM_PATH.match(path)):
         return Link("instagram", Clean("www.instagram.com", match.group(0).rstrip("/") + "/"))
     if host in TWITTER_HOSTS and (match := TWITTER_PATH.match(path)):
@@ -72,6 +76,27 @@ def Classify(url: str) -> Link | None:
     if host in FACEBOOK_SHORT_HOSTS or host in FACEBOOK_HOSTS:
         return FacebookLink(host, path, parts.query)
     return None
+
+
+SOCIAL_HOSTS = INSTAGRAM_HOSTS | TWITTER_HOSTS | THREADS_HOSTS | FACEBOOK_HOSTS | FACEBOOK_SHORT_HOSTS
+
+
+def IsUnsupportedSocialUrl(url: str) -> bool:
+    """A link to a social network that is not a post we can download (a profile, a feed, a highlight...)."""
+    try:
+        host = (urlsplit(url.rstrip(TRAILING_PUNCTUATION)).hostname or "").lower()
+    except ValueError:
+        return False
+    return host in SOCIAL_HOSTS and Classify(url) is None
+
+
+def FindUnsupportedSocialUrls(text: str, extraUrls: list[str] | None = None) -> list[str]:
+    urls: list[str] = []
+    for candidate in URL_PATTERN.findall(text or "") + list(extraUrls or []):
+        candidate = candidate.rstrip(TRAILING_PUNCTUATION)
+        if IsUnsupportedSocialUrl(candidate) and candidate not in urls:
+            urls.append(candidate)
+    return urls
 
 
 def FindLinks(text: str, extraUrls: list[str] | None = None) -> list[Link]:

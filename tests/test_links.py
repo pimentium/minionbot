@@ -9,6 +9,7 @@ from minionbot.social.models import Link
     [
         ("https://www.instagram.com/p/ABC123/?igsh=xyz", "instagram"),
         ("https://instagram.com/reel/ABC_123/", "instagram"),
+        ("https://www.instagram.com/stories/danbiggles/4037489269225376125?utm_source=ig_story_item_share&dmpr=czJpaDlyajhxMzI1", "instagram"),
         ("https://www.instagram.com/someuser/reel/ABC123/", "instagram"),
         ("https://twitter.com/jack/status/20", "twitter"),
         ("https://x.com/jack/status/20?s=46&t=abc", "twitter"),
@@ -31,6 +32,8 @@ def test_classify_supported(url, network):
     "url",
     [
         "https://www.instagram.com/someuser/",
+        "https://www.instagram.com/stories/highlights/17912345678901234/",
+        "https://www.instagram.com/stories/danbiggles/",
         "https://twitter.com/jack",
         "https://x.com/home",
         "https://www.threads.net/@zuck",
@@ -59,6 +62,7 @@ FB_TAIL = (
         ("https://www.instagram.com/p/DeFGPzDjPab/?stkn=ZjFieXR2ZDh5MDR2", "https://www.instagram.com/p/DeFGPzDjPab/"),
         (FB_POST + FB_TAIL, FB_POST),
         # more Instagram / Twitter / Threads
+        ("https://www.instagram.com/stories/danbiggles/4037489269225376125?utm_source=ig_story_item_share&dmpr=czJp", "https://www.instagram.com/stories/danbiggles/4037489269225376125/"),
         ("https://instagram.com/p/ABC123?igsh=xyz&utm_source=qr#frag", "https://www.instagram.com/p/ABC123/"),
         ("https://m.instagram.com/someuser/reel/ABC_1/extra/segments?x=1", "https://www.instagram.com/someuser/reel/ABC_1/"),
         ("https://x.com/jack/status/20?s=46&t=abc&ref_src=twsrc", "https://x.com/jack/status/20"),

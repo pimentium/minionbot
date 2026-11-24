@@ -50,11 +50,16 @@ class InstagramDownloader:
         with self.lock:
             if self.client is None:
                 self.client = self._Login()
+            story = "/stories/" in url
             try:
-                info = self.client.media_info(self.client.media_pk_from_url(url))
+                if story:
+                    info = self.client.story_info(self.client.story_pk_from_url(url))
+                else:
+                    info = self.client.media_info(self.client.media_pk_from_url(url))
             except Exception as error:
                 LOGGER.warning("Instagram fetch failed for %s: %s: %s", url, type(error).__name__, self._Scrub(str(error))[:300])
-                raise DownloadError(f"Could not read this Instagram post ({type(error).__name__}).") from error
+                what = "story (it may have expired: stories last 24 hours)" if story else "post"
+                raise DownloadError(f"Could not read this Instagram {what} ({type(error).__name__}).") from error
         return self.ToRemotePost(url, info)
 
     @staticmethod
@@ -67,4 +72,4 @@ class InstagramDownloader:
             elif item.thumbnail_url:
                 media.append(RemoteMedia(str(item.thumbnail_url), PHOTO))
         username = info.user.username if info.user else ""
-        return RemotePost("instagram", url, f"@{username}" if username else "", info.caption_text or "", media)
+        return RemotePost("instagram", url, f"@{username}" if username else "", getattr(info, "caption_text", "") or "", media)
